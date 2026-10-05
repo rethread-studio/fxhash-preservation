@@ -65,6 +65,8 @@ All commands accept `--json` and exit non-zero when something needs attention.
   `updated`, `unchanged`, `empty`, `error`, `planned`) and these issues:
   - `source_is_git_repo`: history mirrored (see above). `dirty_worktree`: snapshot branch
     written. `shallow_history`, `head_repointed` (HEAD named a missing branch),
+    `gitdir_repaired` (a copy tool had turned empty `.git` subdirs such as `refs/tags`
+    into 0-byte files; the mirror is cloned from a fixed temporary copy, source untouched),
     `source_git_unborn` (`.git` without commits: synthetic commit instead).
   - `embedded_git`: a git repo nested inside a folder. Git would store only a gitlink and
     **lose its content**, so `convert` scans every folder first, and if any has one it
