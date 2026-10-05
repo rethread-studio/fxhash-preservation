@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from ._check import Check, check_all, load_manifest
-from ._convert import Identity, Result, convert_all
+from ._convert import EmbeddedGitAbort, Identity, Result, convert_all
 from ._manifest import build_manifest, write_manifest
 
 # Statuses / issues that mean an archive would be incomplete or wrong.
@@ -29,9 +29,18 @@ def _summary(counter: Counter[str], as_json: bool, extra: dict[str, Any]) -> Non
 
 def cmd_convert(args: argparse.Namespace) -> int:
     ident = Identity.parse(args.author, args.date)
-    with contextlib.ExitStack() as stack:
-        report = stack.enter_context(open(args.report, "a")) if args.report else None
-        counter = _run_convert(args, ident, report)
+    try:
+        with contextlib.ExitStack() as stack:
+            report = stack.enter_context(open(args.report, "a")) if args.report else None
+            counter = _run_convert(args, ident, report)
+    except EmbeddedGitAbort as e:
+        if args.json:
+            print(json.dumps({"aborted": "embedded_git", "folders": e.folders}))
+        else:
+            print(f"🛑 {e}:", file=sys.stderr)
+            for folder, nested in sorted(e.folders.items()):
+                print(f"   {folder}: {', '.join(nested)}", file=sys.stderr)
+        return 3
     _summary(counter, args.json, {})
     bad = counter.get("status:error", 0) + sum(counter.get(f"issue:{i}", 0) for i in _BAD_ISSUES)
     return 1 if bad else 0
@@ -123,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         rc: int = args.func(args)
-    except ValueError as e:
+    except (ValueError, OSError) as e:  # OSError covers urllib's HTTPError/URLError
         print(f"❌ {e}", file=sys.stderr)
         return 2
     return rc

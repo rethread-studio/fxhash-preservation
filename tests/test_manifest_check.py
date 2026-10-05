@@ -10,6 +10,7 @@ from pathlib import Path
 
 from swhprep._check import check_all, load_manifest
 from swhprep._convert import Identity, convert_all
+from swhprep._git import git
 from swhprep._manifest import build_manifest, origin_urls, write_manifest
 from swhprep.cli import main
 from tests.conftest import make_tree
@@ -88,5 +89,14 @@ def test_cli_end_to_end(tmp_path: Path, git_http: Serve, capsys: object) -> None
     assert main(["--json", "check", str(srv / "manifest.js.gz"), "--forge-url", url]) == 0
     shutil.rmtree(srv / "p1.git")
     assert main(["check", str(srv / "manifest.js.gz"), "--forge-url", url]) == 1
+    assert main(["check", url + "missing/manifest.js.gz", "--forge-url", url]) == 2
+    nested = tmp_path / "src" / "p3" / "inner"
+    nested.mkdir(parents=True)
+    (nested / "f").write_text("f")
+    git("init", "-q", str(nested))
+    git("-C", str(nested), "add", "f")
+    git("-C", str(nested), "-c", "user.name=a", "-c", "user.email=b", "commit", "-qm", "i")
+    assert main(["convert", str(tmp_path / "src"), str(tmp_path / "srv2"), *common]) == 3
+    assert not (tmp_path / "srv2").exists()
     assert main(["convert", str(tmp_path / "src"), str(srv), "--author", "bad",
                  "--date", "2020-01-01T00:00:00+00:00"]) == 2

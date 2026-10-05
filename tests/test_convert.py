@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from swhprep._convert import Identity, convert_all, convert_one, plan, safe_name
+from swhprep._convert import (
+    EmbeddedGitAbort,
+    Identity,
+    convert_all,
+    convert_one,
+    plan,
+    safe_name,
+)
 from swhprep._git import git
 from tests.conftest import make_tree
 
@@ -60,17 +67,37 @@ def test_gitignored_files_are_kept(tmp_path: Path, ident: Identity) -> None:
     assert r.issues == []
 
 
-def test_embedded_git_and_own_git_are_flagged(tmp_path: Path, ident: Identity) -> None:
-    src = make_tree(tmp_path / "p", {"a": "1", "sub/inner/z": "z"})
-    git("init", "-q", str(src / "sub" / "inner"))
-    git("-C", str(src / "sub" / "inner"), "add", "z")
-    git("-C", str(src / "sub" / "inner"), "-c", "user.name=a", "-c", "user.email=b",
-        "commit", "-qm", "i")
-    r = convert_one(src, tmp_path / "p.git", ident)
-    assert "embedded_git" in r.issues and r.embedded_git == ["sub/inner"]
-    assert ls_tree(tmp_path / "p.git")["sub/inner"] == "160000"  # content lost -> flagged
-    assert "count_mismatch" not in r.issues
+def nest_repo(src: Path) -> None:
+    inner = src / "sub" / "inner"
+    make_tree(inner, {"z": "z"})
+    git("init", "-q", str(inner))
+    git("-C", str(inner), "add", "z")
+    git("-C", str(inner), "-c", "user.name=a", "-c", "user.email=b", "commit", "-qm", "i")
 
+
+def test_embedded_git_refused(tmp_path: Path, ident: Identity) -> None:
+    src = make_tree(tmp_path / "p", {"a": "1"})
+    nest_repo(src)
+    r = convert_one(src, tmp_path / "p.git", ident)
+    assert r.status == "error" and "sub/inner" in (r.error or "")
+    assert r.embedded_git == ["sub/inner"]
+    assert not (tmp_path / "p.git").exists() and not (tmp_path / "p.git.tmp").exists()
+    # dry run only reports
+    assert convert_one(src, tmp_path / "p.git", ident, dry_run=True).status == "planned"
+
+
+def test_embedded_git_aborts_whole_run(tmp_path: Path, ident: Identity) -> None:
+    make_tree(tmp_path / "src", {"a/x": "1", "b/x": "1", "c/x": "1"})
+    nest_repo(tmp_path / "src" / "b")
+    with pytest.raises(EmbeddedGitAbort) as exc:
+        convert_all(tmp_path / "src", tmp_path / "out", 1, ident)
+    assert exc.value.folders == {str(tmp_path / "src" / "b"): ["sub/inner"]}
+    assert not (tmp_path / "out").exists()  # nothing written, not even the clean folders
+    res = convert_all(tmp_path / "src", tmp_path / "out", 1, ident, dry_run=True)
+    assert ["embedded_git" in r.issues for r in res] == [False, True, False]
+
+
+def test_own_git_without_commits(tmp_path: Path, ident: Identity) -> None:
     own = make_tree(tmp_path / "q", {"a": "1"})
     git("init", "-q", str(own))  # no commits: falls back to a synthetic commit
     r2 = convert_one(own, tmp_path / "q.git", ident)

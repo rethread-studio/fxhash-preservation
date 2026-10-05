@@ -77,6 +77,18 @@ class Result:
         return asdict(self)
 
 
+class EmbeddedGitAbort(RuntimeError):
+    """Some source folders contain nested git repos; the whole run is aborted."""
+
+    def __init__(self, folders: dict[str, list[str]]) -> None:
+        self.folders = folders
+        super().__init__(f"{len(folders)} folder(s) contain nested git repos, nothing written")
+
+
+def _nested(embedded: list[str]) -> list[str]:
+    return [e for e in embedded if e != "."]
+
+
 def safe_name(rel: str) -> str:
     """Map a relative source path to a URL-safe repo path (without the .git suffix)."""
     parts = [_UNSAFE.sub("-", p).strip("-.") or "_" for p in Path(rel).parts]
@@ -165,15 +177,22 @@ def convert_one(
     ignore_filemode: bool = False,
     rebuild: bool = False,
     dry_run: bool = False,
+    scan: tuple[int, list[str], list[str]] | None = None,
 ) -> Result:
     """Create or refresh bare `repo` from `source`.
 
     A source that is itself a git repo with commits keeps its history (all refs mirrored);
-    anything else becomes a single synthetic commit.
+    anything else becomes a single synthetic commit. A source holding a nested git repo is
+    refused: git would store it as a bare gitlink and lose its content.
     """
     res = Result(source=str(source), repo=str(repo))
     try:
-        res.source_entries, res.embedded_git, res.issues = scan_source(source)
+        entries, embedded, issues = scan or scan_source(source)
+        res.source_entries, res.embedded_git, res.issues = entries, embedded, list(issues)
+        if "embedded_git" in res.issues and not dry_run:
+            res.status = "error"
+            res.error = f"nested git repo(s) {_nested(res.embedded_git)}: refusing to convert"
+            return res
         has_history = "source_is_git_repo" in res.issues and _has_commits(source)
         if "source_is_git_repo" in res.issues and not has_history:
             res.issues.append("source_git_unborn")
@@ -333,17 +352,28 @@ def convert_all(
     dry_run: bool = False,
     on_result: Callable[[Result], None] | None = None,
 ) -> list[Result]:
-    """Convert every source folder found at `depth` under `src` into `dest/<name>.git`."""
+    """Convert every source folder found at `depth` under `src` into `dest/<name>.git`.
+
+    Unless `dry_run`, every folder is scanned first and nothing is written if any of them
+    holds a nested git repo (EmbeddedGitAbort lists them).
+    """
     pairs = plan(src, depth)
     results: list[Result] = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        scans = list(pool.map(scan_source, [s for s, _ in pairs]))
+    if not dry_run:
+        bad = {str(s): _nested(sc[1]) for (s, _), sc in zip(pairs, scans, strict=True)
+               if "embedded_git" in sc[2]}
+        if bad:
+            raise EmbeddedGitAbort(bad)
 
-    def work(pair: tuple[Path, str]) -> Result:
-        s, name = pair
+    def work(item: tuple[tuple[Path, str], tuple[int, list[str], list[str]]]) -> Result:
+        (s, name), scan = item
         return convert_one(s, dest / name, ident, ignore_filemode=ignore_filemode,
-                           rebuild=rebuild, dry_run=dry_run)
+                           rebuild=rebuild, dry_run=dry_run, scan=scan)
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        for r in pool.map(work, pairs):
+        for r in pool.map(work, zip(pairs, scans, strict=True)):
             results.append(r)
             if on_result:
                 on_result(r)

@@ -66,7 +66,9 @@ All commands accept `--json` and exit non-zero when something needs attention.
   - `source_is_git_repo`: history mirrored (see above). `dirty_worktree`: snapshot branch
     written. `shallow_history`, `head_repointed` (HEAD named a missing branch),
     `source_git_unborn` (`.git` without commits: synthetic commit instead).
-  - `embedded_git`: a nested repo is stored as a gitlink, so its **content is lost**.
+  - `embedded_git`: a git repo nested inside a folder. Git would store only a gitlink and
+    **lose its content**, so `convert` scans every folder first, and if any has one it
+    writes nothing and exits 3 with the list. `--dry-run` reports them without aborting.
   - `count_mismatch`: tree entries ≠ files on disk.
   - `pack_too_large`: over 4 GiB. The SWH git loader rejects it.
   - `empty_dirs_dropped`, `special_files_skipped`: things git can't store (informational).
@@ -75,31 +77,48 @@ All commands accept `--json` and exit non-zero when something needs attention.
 
 ## Deployment: fxhash.gakoy.com on rootmab
 
-rootmab runs nginx 1.24, git 2.43 and fcgiwrap (`/run/fcgiwrap.socket`, active), with
-1.6 TB free. Infra conventions are in `../rootmab/gakoy.md`.
+Live since 2026-10-05 and empty until the data lands. Already done: the OVH A record
+`fxhash` → 37.187.127.139 (id 5439621500); the snippet and vhost installed on rootmab;
+the Let's Encrypt cert with HTTP→HTTPS redirect; `/srv/fxhash-git` (755, martin). An
+HTTPS smoke test (check, clone, 304, receive-pack 403) passed and was cleaned up.
+rootmab runs nginx 1.24, git 2.43 and fcgiwrap, with 1.6 TB free. Infra conventions are
+in `../rootmab/gakoy.md`.
+
+The conversion runs on the external drive itself: SRC is the folder tree, DEST a sibling
+folder on the same drive.
 
 ```sh
-# 1. convert (synthetic commits: Benoit Baudry, 1970-01-01 UTC)
+# 0. scan: nested git repos, names, empty folders (writes nothing)
+swhprep convert "$SRC" "$DEST" --depth 1 --dry-run --report scan.jsonl \
+    --author "Benoit Baudry <benoit.baudry@umontreal.ca>" --date 1970-01-01T00:00:00+00:00
+#    add --ignore-filemode if the drive is exFAT/NTFS
+
+# 1. convert (synthetic commits: Benoit Baudry, 1970-01-01 UTC); exit 3 = nested repos
 swhprep convert "$SRC" "$DEST" --depth 1 --jobs 8 --report convert.jsonl \
     --author "Benoit Baudry <benoit.baudry@umontreal.ca>" --date 1970-01-01T00:00:00+00:00
 swhprep manifest "$DEST" "$DEST/manifest.js.gz"
 
 # 2. ship
-ssh rootmab 'sudo install -d -o martin /srv/fxhash-git'
-rsync -a --delete "$DEST/" rootmab:/srv/fxhash-git/
+# --chmod: nginx/fcgiwrap (www-data) must read everything; -a alone copies local perms,
+# including those of $DEST itself onto /srv/fxhash-git (a 0750 there = 403 everywhere)
+rsync -a --delete --chmod=Da+rx,Fa+r "$DEST/" rootmab:/srv/fxhash-git/
 
-# 3. DNS: A record fxhash.gakoy.com -> 37.187.127.139 (OVH API, no wildcard)
+# 3. verify from outside, then file Add Forge Now (grokmirror, https://fxhash.gakoy.com/)
+swhprep check https://fxhash.gakoy.com/manifest.js.gz --forge-url https://fxhash.gakoy.com/
+```
 
-# 4. nginx + TLS
+Server setup, already done, kept for a rebuild. Re-installing the vhost file overwrites
+certbot's 443 lines, so re-run certbot afterwards.
+
+```sh
+ssh rootmab 'sudo install -d -o martin -m755 /srv/fxhash-git'
+# DNS: A record fxhash.gakoy.com -> 37.187.127.139 (OVH API, no wildcard; agent-ovh)
 scp deploy/swh-git-locations.conf deploy/fxhash.gakoy.com rootmab:/tmp/
 ssh rootmab 'sudo install -m644 /tmp/swh-git-locations.conf /etc/nginx/snippets/ &&
   sudo install -m644 /tmp/fxhash.gakoy.com /etc/nginx/sites-available/ &&
   sudo ln -sf ../sites-available/fxhash.gakoy.com /etc/nginx/sites-enabled/ &&
   sudo nginx -t && sudo systemctl reload nginx &&
   sudo certbot --nginx --redirect --cert-name fxhash.gakoy.com -d fxhash.gakoy.com'
-
-# 5. verify from outside, then file Add Forge Now (grokmirror, https://fxhash.gakoy.com/)
-swhprep check https://fxhash.gakoy.com/manifest.js.gz --forge-url https://fxhash.gakoy.com/
 ```
 
 ## Validation
