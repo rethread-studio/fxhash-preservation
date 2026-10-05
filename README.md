@@ -81,6 +81,8 @@ All commands accept `--json` and exit non-zero when something needs attention.
   - `count_mismatch`: tree entries ≠ files on disk.
   - `pack_too_large`: over 4 GiB. The SWH git loader rejects it.
   - `empty_dirs_dropped`, `special_files_skipped`: things git can't store (informational).
+  - `all_executable`: every file of the folder has the executable bit, typical of a copy
+    through exFAT/NTFS/zip. Without `--ignore-filemode`, `convert` warns and exits 1.
 - `--rebuild` re-snapshots existing repos. A changed folder gets a child commit, so SWH
   sees a new revision.
 
@@ -102,14 +104,16 @@ DEST=/media/martin/63d87370-5401-42f9-a718-bead975d75d4/fxhash-git
 # the 2 nested repos found (vendored GitHub libs); approved to store as plain files
 FLAT=(--flatten-nested 'fxhash-1.0-tezos/2023/Aweille!__28348/library'
       --flatten-nested 'fxhash-1.0-tezos/2023/Gridscape Symphony__29177/p5.gif.js')
+# the drive is ext4, but all 663k source files are mode 777 (copy artefact): ignore modes
+OPTS=(--depth 3 --ignore-filemode "${FLAT[@]}")
 
-# 0. scan: nested git repos, names, empty folders (writes nothing)
-swhprep convert "$SRC" "$DEST" --depth 3 "${FLAT[@]}" --dry-run --report scan.jsonl \
+# 0. scan: nested git repos, names, empty folders, all-executable folders (writes nothing)
+swhprep convert "$SRC" "$DEST" "${OPTS[@]}" --dry-run --report scan.jsonl \
     --author "Benoit Baudry <benoit.baudry@umontreal.ca>" --date 1970-01-01T00:00:00+00:00
-#    add --ignore-filemode if the drive is exFAT/NTFS (it is ext4)
 
 # 1. convert (synthetic commits: Benoit Baudry, 1970-01-01 UTC); exit 3 = nested repos
-swhprep convert "$SRC" "$DEST" --depth 3 "${FLAT[@]}" --jobs 8 --report convert.jsonl \
+#    ~1h50 for the 27.6k on 8 jobs (CPU-bound in repack)
+swhprep convert "$SRC" "$DEST" "${OPTS[@]}" --jobs 8 --report convert.jsonl \
     --author "Benoit Baudry <benoit.baudry@umontreal.ca>" --date 1970-01-01T00:00:00+00:00
 swhprep manifest "$DEST" "$DEST/manifest.js.gz"
 

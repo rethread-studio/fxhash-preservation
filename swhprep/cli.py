@@ -43,6 +43,11 @@ def cmd_convert(args: argparse.Namespace) -> int:
         return 3
     _summary(counter, args.json, {})
     bad = counter.get("status:error", 0) + sum(counter.get(f"issue:{i}", 0) for i in _BAD_ISSUES)
+    if counter.get("issue:all_executable") and not args.ignore_filemode:
+        bad += 1
+        if not args.json:
+            print(f"⚠️  {counter['issue:all_executable']} folder(s) have every file executable "
+                  "(exFAT/NTFS/zip copy?): consider --ignore-filemode", file=sys.stderr)
     return 1 if bad else 0
 
 

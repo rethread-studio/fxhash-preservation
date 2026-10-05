@@ -199,8 +199,21 @@ def test_empty_source_creates_nothing(tmp_path: Path, ident: Identity) -> None:
 def test_ignore_filemode(tmp_path: Path, ident: Identity) -> None:
     src = make_tree(tmp_path / "p", {"a": "1"})
     (src / "a").chmod(0o755)
-    convert_one(src, tmp_path / "p.git", ident, ignore_filemode=True)
+    r = convert_one(src, tmp_path / "p.git", ident, ignore_filemode=True)
     assert ls_tree(tmp_path / "p.git") == {"a": "100644"}
+    assert r.issues == ["all_executable"]
+    (src / "b").write_text("2")  # boundary: one non-executable file clears it
+    assert convert_one(src, tmp_path / "q.git", ident).issues == []
+
+
+def test_cli_flags_all_executable(tmp_path: Path) -> None:
+    from swhprep.cli import main
+    src = make_tree(tmp_path / "src", {"p/a": "1"})
+    (src / "p" / "a").chmod(0o777)
+    common = [str(src), str(tmp_path / "out"), "--author", "T <t@e.org>",
+              "--date", "2020-01-01T00:00:00+00:00", "--dry-run"]
+    assert main(["convert", *common]) == 1
+    assert main(["convert", *common, "--ignore-filemode"]) == 0
 
 
 def test_source_untouched(tmp_path: Path, ident: Identity) -> None:

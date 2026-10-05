@@ -155,12 +155,12 @@ def scan_source(
     `flatten` lists nested repos (relative to `path`) whose files are stored as plain files
     instead of a gitlink. Returns (entries, embedded_git_dirs, issues).
     """
-    entries = 0
+    entries = regular = executable = 0
     embedded: list[str] = []
     issues: set[str] = set()
     for root, dirs, files in os.walk(path, followlinks=False):
         rootp = Path(root)
-        marker = _is_git_marker(rootp, dirs, files)
+        marker =_is_git_marker(rootp, dirs, files)
         if marker is None:
             issues.add("dangling_gitfile_dropped")
         elif marker:
@@ -182,14 +182,21 @@ def scan_source(
         dirs[:] = [d for d in dirs if not (rootp / d).is_symlink()]
         for f in files:
             p = rootp / f
-            if p.is_symlink() or p.is_file():
+            if p.is_symlink():
                 entries += 1
+            elif p.is_file():
+                entries += 1
+                regular += 1
+                executable += bool(p.stat().st_mode & 0o100)
             else:
                 issues.add("special_files_skipped")
         if not dirs and not files and rootp != path:
             issues.add("empty_dirs_dropped")
     if "." in embedded:
         issues.add("source_is_git_repo")
+    if regular and executable == regular:
+        # typical of a copy through exFAT/NTFS/zip: modes carry no meaning
+        issues.add("all_executable")
     return entries, embedded, sorted(issues)
 
 
