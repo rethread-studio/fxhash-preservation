@@ -12,6 +12,8 @@ _BASE_ENV = {
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_TERMINAL_PROMPT": "0",
+    # read-only commands (status, diff) must not refresh a source repo's index
+    "GIT_OPTIONAL_LOCKS": "0",
     "LC_ALL": "C",
 }
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from swhprep._convert import SNAPSHOT_BRANCH, Identity, convert_one
-from swhprep._git import git
+from swhprep._git import GitError, git
 from swhprep._manifest import build_manifest
 from tests.conftest import make_tree
 
@@ -117,3 +119,28 @@ def test_broken_repo_reports_error(tmp_path: Path, ident: Identity) -> None:
     r = convert_one(src, tmp_path / "p.git", ident)
     assert r.status == "error"
     assert not (tmp_path / "p.git").exists() and not (tmp_path / "p.git.tmp").exists()
+
+
+def test_empty_dirs_turned_files_in_gitdir(tmp_path: Path, ident: Identity) -> None:
+    # seen on the fxhash drive: a copy turned empty .git subdirs into 0-byte files
+    src = make_repo(tmp_path / "p")
+    git("-C", str(src), "pack-refs", "--all")
+    git("-C", str(src), "repack", "-adq")
+    want = refs(src / ".git")
+    gd = src / ".git"
+    for d in ["refs/tags", "objects/info"]:
+        for f in (gd / d).iterdir():
+            f.unlink()
+        (gd / d).rmdir()
+        (gd / d).write_bytes(b"")
+    before = sorted((str(p), p.stat().st_mtime_ns) for p in gd.rglob("*"))
+    # negative control: git itself can't serve it
+    with pytest.raises(GitError, match="not our ref 0000"):
+        git("clone", "-q", "--mirror", "--no-local", str(src), str(tmp_path / "raw.git"))
+    r = convert_one(src, tmp_path / "p.git", ident)
+    assert r.status == "mirrored", r.error
+    assert "gitdir_repaired" in r.issues
+    assert refs(tmp_path / "p.git") == want
+    assert sorted((str(p), p.stat().st_mtime_ns) for p in gd.rglob("*")) == before
+    assert not (tmp_path / "p.git.src").exists()
+    git("fsck", "--strict", git_dir=tmp_path / "p.git")

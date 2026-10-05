@@ -292,8 +292,14 @@ def _mirror(
     work = repo.with_name(repo.name + ".tmp")
     shutil.rmtree(work, ignore_errors=True)
     work.parent.mkdir(parents=True, exist_ok=True)
-    # --no-local: real pack transfer (verifies objects, no hardlinks into the drive)
-    git(*_SAFE, "clone", "-q", "--mirror", "--no-local", "--template=", str(source), str(work))
+    origin = _repaired_gitdir(source, repo.with_name(repo.name + ".src"), res)
+    try:
+        # --no-local: real pack transfer (verifies objects, no hardlinks into the drive)
+        git(*_SAFE, "clone", "-q", "--mirror", "--no-local", "--template=", str(origin),
+            str(work))
+    finally:
+        if origin != source:
+            shutil.rmtree(origin, ignore_errors=True)
     git("config", "--remove-section", "remote.origin", git_dir=work)
     (work / "description").write_text(f"{source.name}\n")
     if git("rev-parse", "--is-shallow-repository", git_dir=work) == "true":
@@ -333,6 +339,29 @@ def _mirror(
     res.pack_bytes = _pack_bytes(repo)
     if res.pack_bytes > SWH_MAX_PACK_BYTES:
         res.issues.append("pack_too_large")
+
+
+# Directories git needs inside .git. Some copy tools turn empty ones into 0-byte files,
+# which git then reads as refs with a zero id ("not our ref 0000...").
+_GITDIR_DIRS = ("branches", "hooks", "info", "objects/info", "objects/pack", "refs/heads",
+                "refs/remotes", "refs/tags")
+
+
+def _repaired_gitdir(source: Path, scratch: Path, res: Result) -> Path:
+    """`source`, or a copy of its .git in `scratch` with such 0-byte files made dirs again."""
+    gitdir = source / ".git"
+    bad = [d for d in _GITDIR_DIRS
+           if (gitdir / d).is_file() and not (gitdir / d).is_symlink()
+           and (gitdir / d).stat().st_size == 0]
+    if not bad:
+        return source
+    shutil.rmtree(scratch, ignore_errors=True)
+    shutil.copytree(gitdir, scratch, symlinks=True)
+    for d in bad:
+        (scratch / d).unlink()
+        (scratch / d).mkdir()
+    res.issues.append("gitdir_repaired")
+    return scratch
 
 
 def _count_tree(repo: Path, tree: str) -> int:
