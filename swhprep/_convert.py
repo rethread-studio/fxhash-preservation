@@ -15,6 +15,8 @@ from typing import Any
 from ._git import GitError, git
 
 BRANCH = "main"
+# Mirrored repos: uncommitted/untracked files of the source working tree land here.
+SNAPSHOT_BRANCH = "swh-worktree-snapshot"
 # SWH git loader rejects packfiles above this size (swh.loader.git pack_size_bytes).
 SWH_MAX_PACK_BYTES = 4 * 1024**3
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -41,7 +43,8 @@ class Identity:
         minutes = int(offset.total_seconds()) // 60
         sign = "+" if minutes >= 0 else "-"
         tz = f"{sign}{abs(minutes) // 60:02d}{abs(minutes) % 60:02d}"
-        return cls(m.group(1), m.group(2), f"{int(dt.timestamp())} {tz}")
+        # "@": git rejects a bare "0 +0000" (epoch 0) as an invalid date; same stored value
+        return cls(m.group(1), m.group(2), f"@{int(dt.timestamp())} {tz}")
 
     def env(self) -> dict[str, str]:
         return {
@@ -60,7 +63,8 @@ class Result:
 
     source: str
     repo: str
-    status: str = "pending"  # created | updated | unchanged | exists | empty | error | planned
+    # created | mirrored | updated | unchanged | exists | empty | error | planned
+    status: str = "pending"
     commit: str | None = None
     source_entries: int = 0
     tree_entries: int = 0
@@ -162,20 +166,31 @@ def convert_one(
     rebuild: bool = False,
     dry_run: bool = False,
 ) -> Result:
-    """Create or refresh `repo` (bare) holding the content of `source` as a single commit."""
+    """Create or refresh bare `repo` from `source`.
+
+    A source that is itself a git repo with commits keeps its history (all refs mirrored);
+    anything else becomes a single synthetic commit.
+    """
     res = Result(source=str(source), repo=str(repo))
     try:
         res.source_entries, res.embedded_git, res.issues = scan_source(source)
+        has_history = "source_is_git_repo" in res.issues and _has_commits(source)
+        if "source_is_git_repo" in res.issues and not has_history:
+            res.issues.append("source_git_unborn")
         if dry_run:
             res.status = "planned"
             return res
-        if res.source_entries == 0:
+        if res.source_entries == 0 and not has_history:
             res.status = "empty"
             return res
-        exists = (repo / "refs" / "heads" / BRANCH).exists() or _has_ref(repo)
+        # repos only appear under their final name once complete (built in *.tmp, renamed)
+        exists = repo.is_dir()
         if exists and not rebuild:
             res.status = "exists"
-            res.commit = git("rev-parse", BRANCH, git_dir=repo)
+            res.commit = git("rev-parse", "-q", "--verify", "HEAD", git_dir=repo, check=False)
+            return res
+        if has_history:
+            _mirror(source, repo, ident, res, ignore_filemode=ignore_filemode)
             return res
         work = repo if exists else repo.with_name(repo.name + ".tmp")
         if not exists:
@@ -198,32 +213,103 @@ def convert_one(
     except (OSError, GitError, ValueError) as e:
         res.status = "error"
         res.error = str(e)
+        shutil.rmtree(repo.with_name(repo.name + ".tmp"), ignore_errors=True)
     return res
 
 
-def _has_ref(repo: Path) -> bool:
-    if not repo.is_dir():
-        return False
-    return bool(git("for-each-ref", f"refs/heads/{BRANCH}", git_dir=repo, check=False))
+# The drive's files may belong to another uid (or none, on exFAT): git must still read them.
+_SAFE = ["-c", "safe.directory=*"]
+
+
+def _has_commits(source: Path) -> bool:
+    # Any ref counts, even if HEAD or objects are broken: such a repo must fail loudly in
+    # _mirror rather than be silently flattened into a synthetic commit.
+    # (%(refname) alone doesn't read objects, so broken objects don't hide the ref.)
+    return bool(git(*_SAFE, "-C", str(source), "for-each-ref", "--count=1",
+                    "--format=%(refname)", check=False))
+
+
+def _mirror(
+    source: Path, repo: Path, ident: Identity, res: Result, *, ignore_filemode: bool
+) -> None:
+    """Mirror every ref of the source repo; uncommitted work goes on a snapshot branch."""
+    work = repo.with_name(repo.name + ".tmp")
+    shutil.rmtree(work, ignore_errors=True)
+    work.parent.mkdir(parents=True, exist_ok=True)
+    # --no-local: real pack transfer (verifies objects, no hardlinks into the drive)
+    git(*_SAFE, "clone", "-q", "--mirror", "--no-local", "--template=", str(source), str(work))
+    git("config", "--remove-section", "remote.origin", git_dir=work)
+    (work / "description").write_text(f"{source.name}\n")
+    if git("rev-parse", "--is-shallow-repository", git_dir=work) == "true":
+        res.issues.append("shallow_history")
+    head = git("rev-parse", "-q", "--verify", "HEAD^{commit}", git_dir=work, check=False)
+    if not head:  # HEAD names a branch that doesn't exist: point it at the first one
+        branch = git("for-each-ref", "--count=1", "--format=%(refname)", "refs/heads/",
+                     git_dir=work)
+        if not branch:
+            raise GitError(f"{source}: no branch to use as HEAD")
+        git("symbolic-ref", "HEAD", branch, git_dir=work)
+        head = git("rev-parse", "HEAD^{commit}", git_dir=work)
+        res.issues.append("head_repointed")
+    # Snapshot respects the repo's own .gitignore (no -f): ignored files are build output
+    # the authors chose not to version.
+    tree = _snapshot_tree(source, work, ignore_filemode=ignore_filemode, force=False,
+                          start=head)
+    if tree != git("rev-parse", f"{head}^{{tree}}", git_dir=work):
+        msg = f"Uncommitted working tree of {source.name}\n".encode()
+        snap = git("commit-tree", tree, "-p", head, git_dir=work, env=ident.env(), input=msg)
+        git("update-ref", f"refs/heads/{SNAPSHOT_BRANCH}", snap, git_dir=work)
+        res.issues.append("dirty_worktree")
+    git("repack", "-adq", git_dir=work)
+    git("update-server-info", git_dir=work)
+    old = repo.with_name(repo.name + ".old")
+    if repo.exists():
+        before = git("show-ref", git_dir=repo, check=False)
+        repo.rename(old)
+    else:
+        before = None
+    work.rename(repo)
+    shutil.rmtree(old, ignore_errors=True)
+    after = git("show-ref", git_dir=repo, check=False)
+    res.status = "mirrored" if before is None else ("unchanged" if before == after else "updated")
+    res.commit = head
+    res.tree_entries = _count_tree(repo, tree)
+    res.pack_bytes = _pack_bytes(repo)
+    if res.pack_bytes > SWH_MAX_PACK_BYTES:
+        res.issues.append("pack_too_large")
+
+
+def _count_tree(repo: Path, tree: str) -> int:
+    out = git("ls-tree", "-r", "--name-only", "-z", tree, git_dir=repo)
+    return out.count("\0")
+
+
+def _snapshot_tree(
+    source: Path, repo: Path, *, ignore_filemode: bool, force: bool, start: str | None = None
+) -> str:
+    """Tree object of `source` as seen by `git add -A`, written into `repo`."""
+    index = repo / "swhprep.index"
+    env = {"GIT_INDEX_FILE": str(index), "GIT_WORK_TREE": str(source)}
+    cfg = [*_SAFE, "-c", "core.autocrlf=false", "-c", "core.safecrlf=false",
+           "-c", f"core.fileMode={'false' if ignore_filemode else 'true'}",
+           "-c", "advice.addEmbeddedRepo=false"]
+    try:
+        index.unlink(missing_ok=True)
+        if start:
+            git("read-tree", start, git_dir=repo, env=env)
+        git(*cfg, "add", "-A", *(["-f"] if force else []), ".", git_dir=repo, env=env)
+        return git("write-tree", git_dir=repo, env=env)
+    finally:
+        index.unlink(missing_ok=True)
 
 
 def _commit_tree(
     source: Path, repo: Path, ident: Identity, res: Result, *, ignore_filemode: bool
 ) -> None:
-    index = repo / "swhprep.index"
-    env = {"GIT_INDEX_FILE": str(index), "GIT_WORK_TREE": str(source), **ident.env()}
-    cfg = ["-c", "core.autocrlf=false", "-c", "core.safecrlf=false",
-           "-c", f"core.fileMode={'false' if ignore_filemode else 'true'}",
-           "-c", "advice.addEmbeddedRepo=false"]
-    try:
-        index.unlink(missing_ok=True)
-        # -f: archive files even when a .gitignore inside the source excludes them
-        git(*cfg, "add", "-A", "-f", ".", git_dir=repo, env=env)
-        tree = git("write-tree", git_dir=repo, env=env)
-    finally:
-        index.unlink(missing_ok=True)
-    res.tree_entries = len(git("ls-tree", "-r", "--name-only", "-z", tree, git_dir=repo)
-                           .split("\0")) - 1 if tree else 0
+    env = ident.env()
+    # force: archive files even when a .gitignore inside the source excludes them
+    tree = _snapshot_tree(source, repo, ignore_filemode=ignore_filemode, force=True)
+    res.tree_entries = _count_tree(repo, tree)
     parent = git("rev-parse", "-q", "--verify", f"refs/heads/{BRANCH}", git_dir=repo, check=False)
     if parent and git("rev-parse", f"{parent}^{{tree}}", git_dir=repo) == tree:
         res.status, res.commit = "unchanged", parent

@@ -20,7 +20,7 @@ def ls_tree(repo: Path) -> dict[str, str]:
 
 def test_identity_parse() -> None:
     i = Identity.parse("A B <a@b.c>", "2020-01-01T01:00:00+01:00")
-    assert (i.name, i.email, i.date) == ("A B", "a@b.c", "1577836800 +0100")
+    assert (i.name, i.email, i.date) == ("A B", "a@b.c", "@1577836800 +0100")
     with pytest.raises(ValueError):
         Identity.parse("no email", "2020-01-01T00:00:00+00:00")
     with pytest.raises(ValueError):
@@ -72,10 +72,21 @@ def test_embedded_git_and_own_git_are_flagged(tmp_path: Path, ident: Identity) -
     assert "count_mismatch" not in r.issues
 
     own = make_tree(tmp_path / "q", {"a": "1"})
-    git("init", "-q", str(own))
+    git("init", "-q", str(own))  # no commits: falls back to a synthetic commit
     r2 = convert_one(own, tmp_path / "q.git", ident)
-    assert "source_is_git_repo" in r2.issues
-    assert set(ls_tree(tmp_path / "q.git")) == {"a"}
+    assert {"source_is_git_repo", "source_git_unborn"} <= set(r2.issues)
+    assert r2.status == "created" and set(ls_tree(tmp_path / "q.git")) == {"a"}
+
+
+def test_epoch_zero_date(tmp_path: Path) -> None:
+    ident = Identity.parse("Benoit Baudry <benoit.baudry@umontreal.ca>",
+                           "1970-01-01T00:00:00+00:00")
+    src = make_tree(tmp_path / "p", {"a": "1"})
+    r = convert_one(src, tmp_path / "p.git", ident)
+    assert r.status == "created", r.error
+    assert git("log", "-1", "--format=%ad|%cd", "--date=raw", "main",
+               git_dir=tmp_path / "p.git") == "0 +0000|0 +0000"
+    git("fsck", "--strict", git_dir=tmp_path / "p.git")
 
 
 def test_empty_dirs_and_special_files(tmp_path: Path, ident: Identity) -> None:

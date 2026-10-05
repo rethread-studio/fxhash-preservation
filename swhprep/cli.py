@@ -16,7 +16,7 @@ from ._manifest import build_manifest, write_manifest
 
 # Statuses / issues that mean an archive would be incomplete or wrong.
 _BAD_STATUS = {"error"}
-_BAD_ISSUES = {"count_mismatch", "pack_too_large", "embedded_git", "source_is_git_repo"}
+_BAD_ISSUES = {"count_mismatch", "pack_too_large", "embedded_git"}
 
 
 def _summary(counter: Counter[str], as_json: bool, extra: dict[str, Any]) -> None:

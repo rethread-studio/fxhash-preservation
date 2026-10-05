@@ -37,7 +37,8 @@ swhprep convert "$SRC" "$DEST" --depth 1 --jobs 8 --report convert.jsonl \
 # 3. manifest (re-run after any change)
 swhprep manifest "$DEST" "$DEST/manifest.js.gz"
 
-# 4. serve: deploy/nginx-swh-git.conf, then from outside the server:
+# 4. serve: deploy/swh-git-locations.conf included in a vhost (deploy/nginx-swh-git.conf,
+#    or deploy/fxhash.gakoy.com with TLS), then from outside the server:
 swhprep check https://git.example.org/manifest.js.gz --forge-url https://git.example.org/
 
 # 5. https://archive.softwareheritage.org/add-forge/request/create/
@@ -54,15 +55,52 @@ All commands accept `--json` and exit non-zero when something needs attention.
   for every repo, so re-runs give identical commit ids.
 - `.gitignore` files inside sources are ignored (`git add -f`), and global/system git
   config is isolated. Objects are packed, and `info/refs` is written for dumb-HTTP fallback.
-- The report (one JSON line per folder) has a status (`created`, `exists`, `updated`,
-  `unchanged`, `empty`, `error`, `planned`) and these issues:
-  - `source_is_git_repo`: the folder already has `.git`. Its history is **not** used.
+- A folder that already is a git repo with refs keeps its history. Every ref is mirrored
+  (`clone --mirror --no-local`) with the same commit ids, and the remote config pointing
+  back at the drive is dropped. If the working tree differs from HEAD (modified or
+  untracked files, minus that repo's own `.gitignore`), a commit on top of HEAD goes to
+  branch `swh-worktree-snapshot`. A repo with broken objects fails with `error`; it is
+  never silently flattened.
+- The report (one JSON line per folder) has a status (`created`, `mirrored`, `exists`,
+  `updated`, `unchanged`, `empty`, `error`, `planned`) and these issues:
+  - `source_is_git_repo`: history mirrored (see above). `dirty_worktree`: snapshot branch
+    written. `shallow_history`, `head_repointed` (HEAD named a missing branch),
+    `source_git_unborn` (`.git` without commits: synthetic commit instead).
   - `embedded_git`: a nested repo is stored as a gitlink, so its **content is lost**.
   - `count_mismatch`: tree entries ≠ files on disk.
   - `pack_too_large`: over 4 GiB. The SWH git loader rejects it.
   - `empty_dirs_dropped`, `special_files_skipped`: things git can't store (informational).
 - `--rebuild` re-snapshots existing repos. A changed folder gets a child commit, so SWH
   sees a new revision.
+
+## Deployment: fxhash.gakoy.com on rootmab
+
+rootmab runs nginx 1.24, git 2.43 and fcgiwrap (`/run/fcgiwrap.socket`, active), with
+1.6 TB free. Infra conventions are in `../rootmab/gakoy.md`.
+
+```sh
+# 1. convert (synthetic commits: Benoit Baudry, 1970-01-01 UTC)
+swhprep convert "$SRC" "$DEST" --depth 1 --jobs 8 --report convert.jsonl \
+    --author "Benoit Baudry <benoit.baudry@umontreal.ca>" --date 1970-01-01T00:00:00+00:00
+swhprep manifest "$DEST" "$DEST/manifest.js.gz"
+
+# 2. ship
+ssh rootmab 'sudo install -d -o martin /srv/fxhash-git'
+rsync -a --delete "$DEST/" rootmab:/srv/fxhash-git/
+
+# 3. DNS: A record fxhash.gakoy.com -> 37.187.127.139 (OVH API, no wildcard)
+
+# 4. nginx + TLS
+scp deploy/swh-git-locations.conf deploy/fxhash.gakoy.com rootmab:/tmp/
+ssh rootmab 'sudo install -m644 /tmp/swh-git-locations.conf /etc/nginx/snippets/ &&
+  sudo install -m644 /tmp/fxhash.gakoy.com /etc/nginx/sites-available/ &&
+  sudo ln -sf ../sites-available/fxhash.gakoy.com /etc/nginx/sites-enabled/ &&
+  sudo nginx -t && sudo systemctl reload nginx &&
+  sudo certbot --nginx --redirect --cert-name fxhash.gakoy.com -d fxhash.gakoy.com'
+
+# 5. verify from outside, then file Add Forge Now (grokmirror, https://fxhash.gakoy.com/)
+swhprep check https://fxhash.gakoy.com/manifest.js.gz --forge-url https://fxhash.gakoy.com/
+```
 
 ## Validation
 
