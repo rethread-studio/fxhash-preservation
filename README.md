@@ -103,9 +103,20 @@ swhprep manifest "$DEST" "$DEST/manifest.js.gz"
 # including those of $DEST itself onto /srv/fxhash-git (a 0750 there = 403 everywhere)
 rsync -a --delete --chmod=Da+rx,Fa+r "$DEST/" rootmab:/srv/fxhash-git/
 
-# 3. verify from outside, then file Add Forge Now (grokmirror, https://fxhash.gakoy.com/)
+# 3. verify from outside; must print no ❌ and exit 0
 swhprep check https://fxhash.gakoy.com/manifest.js.gz --forge-url https://fxhash.gakoy.com/
 ```
+
+4. Martin files Add Forge Now at https://archive.softwareheritage.org/add-forge/request/create/
+   (log in to SWH first):
+   - Forge type: `grokmirror`
+   - Forge URL: `https://fxhash.gakoy.com/`
+   - Contact name: `Martin Monperrus`
+   - Contact email: `monperrus@kth.se`
+   - Comment: `About 27,000 git repositories, one per fxhash project, listed in
+     https://fxhash.gakoy.com/manifest.js.gz (grokmirror format), served over smart HTTPS.
+     Most are single-commit snapshots of source folders; some keep their original history.
+     The server is a small machine: please use the default Add Forge Now rate limits.`
 
 Server setup, already done, kept for a rebuild. Re-installing the vhost file overwrites
 certbot's 443 lines, so re-run certbot afterwards.
