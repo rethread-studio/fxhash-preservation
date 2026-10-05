@@ -69,6 +69,13 @@ All commands accept `--json` and exit non-zero when something needs attention.
   - `embedded_git`: a git repo nested inside a folder. Git would store only a gitlink and
     **lose its content**, so `convert` scans every folder first, and if any has one it
     writes nothing and exits 3 with the list. `--dry-run` reports them without aborting.
+    After review, `--flatten-nested PATH` (relative to SRC, repeatable) stores a listed
+    one's working-tree files as plain files, without its history: issue
+    `nested_git_flattened`. Unlisted nested repos still abort; a listed path that isn't a
+    nested repo exits 2.
+  - `dangling_gitfile_dropped`: a `.git` *file* whose `gitdir:` target is missing (a
+    submodule copied without its parent). Git treats the folder as plain, so its files are
+    stored and only the pointer line is lost.
   - `count_mismatch`: tree entries ≠ files on disk.
   - `pack_too_large`: over 4 GiB. The SWH git loader rejects it.
   - `empty_dirs_dropped`, `special_files_skipped`: things git can't store (informational).
@@ -88,13 +95,19 @@ The conversion runs on the external drive itself: SRC is the folder tree, DEST a
 folder on the same drive.
 
 ```sh
+SRC=/media/martin/63d87370-5401-42f9-a718-bead975d75d4/fxhash-archive  # <platform>/<year>/<project>
+DEST=/media/martin/63d87370-5401-42f9-a718-bead975d75d4/fxhash-git
+# the 2 nested repos found (vendored GitHub libs); approved to store as plain files
+FLAT=(--flatten-nested 'fxhash-1.0-tezos/2023/Aweille!__28348/library'
+      --flatten-nested 'fxhash-1.0-tezos/2023/Gridscape Symphony__29177/p5.gif.js')
+
 # 0. scan: nested git repos, names, empty folders (writes nothing)
-swhprep convert "$SRC" "$DEST" --depth 1 --dry-run --report scan.jsonl \
+swhprep convert "$SRC" "$DEST" --depth 3 "${FLAT[@]}" --dry-run --report scan.jsonl \
     --author "Benoit Baudry <benoit.baudry@umontreal.ca>" --date 1970-01-01T00:00:00+00:00
-#    add --ignore-filemode if the drive is exFAT/NTFS
+#    add --ignore-filemode if the drive is exFAT/NTFS (it is ext4)
 
 # 1. convert (synthetic commits: Benoit Baudry, 1970-01-01 UTC); exit 3 = nested repos
-swhprep convert "$SRC" "$DEST" --depth 1 --jobs 8 --report convert.jsonl \
+swhprep convert "$SRC" "$DEST" --depth 3 "${FLAT[@]}" --jobs 8 --report convert.jsonl \
     --author "Benoit Baudry <benoit.baudry@umontreal.ca>" --date 1970-01-01T00:00:00+00:00
 swhprep manifest "$DEST" "$DEST/manifest.js.gz"
 

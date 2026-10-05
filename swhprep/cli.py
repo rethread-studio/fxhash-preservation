@@ -61,7 +61,8 @@ def _run_convert(args: argparse.Namespace, ident: Identity, report: IO[str] | No
 
     convert_all(Path(args.src), Path(args.dest), args.depth, ident, jobs=args.jobs,
                 ignore_filemode=args.ignore_filemode, rebuild=args.rebuild,
-                dry_run=args.dry_run, on_result=on_result)
+                dry_run=args.dry_run, on_result=on_result,
+                flatten_nested=args.flatten_nested)
     return counter
 
 
@@ -110,6 +111,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="re-snapshot existing repos; a changed tree gets a child commit")
     c.add_argument("--dry-run", action="store_true", help="scan and report, write nothing")
     c.add_argument("--report", help="append one JSON line per folder to this file")
+    c.add_argument("--flatten-nested", action="append", default=[], metavar="PATH",
+                   help="nested git repo (path relative to SRC) to store as plain files, "
+                        "without its history; repeatable. Other nested repos still abort")
     c.set_defaults(func=cmd_convert)
 
     m = sub.add_parser("manifest", help="write grokmirror manifest.js.gz")

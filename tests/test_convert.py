@@ -97,6 +97,71 @@ def test_embedded_git_aborts_whole_run(tmp_path: Path, ident: Identity) -> None:
     assert ["embedded_git" in r.issues for r in res] == [False, True, False]
 
 
+def test_flatten_nested_stores_plain_files(tmp_path: Path, ident: Identity) -> None:
+    src = make_tree(tmp_path / "p", {"a": "1"})
+    nest_repo(src)
+    inner = src / "sub" / "inner"
+    (inner / "z").write_text("dirty")  # worktree content wins over the nested repo's HEAD
+    (inner / "x.sh").write_text("#!/bin/sh\n")
+    (inner / "x.sh").chmod(0o755)
+    (inner / ".gitignore").write_text("*.log\n")
+    (inner / "kept.log").write_text("l")
+    os.symlink("z", inner / "lnk")
+    nest_repo(inner)  # a repo inside the flattened one is flattened too
+    r = convert_one(src, tmp_path / "p.git", ident, flatten=frozenset({"sub/inner"}))
+    assert r.status == "created" and r.issues == ["nested_git_flattened"], r
+    t = ls_tree(tmp_path / "p.git")
+    assert t == {"a": "100644", "sub/inner/z": "100644", "sub/inner/x.sh": "100755",
+                 "sub/inner/.gitignore": "100644", "sub/inner/kept.log": "100644",
+                 "sub/inner/lnk": "120000", "sub/inner/sub/inner/z": "100644"}
+    assert git("show", "main:sub/inner/z", git_dir=tmp_path / "p.git") == "dirty"
+    assert git("cat-file", "-p", "main:sub/inner/lnk", git_dir=tmp_path / "p.git") == "z"
+
+
+def test_flatten_nested_in_mirrored_source(tmp_path: Path, ident: Identity) -> None:
+    src = make_tree(tmp_path / "p", {"a": "1"})
+    git("init", "-q", str(src))
+    git("-C", str(src), "add", "a")
+    git("-C", str(src), "-c", "user.name=a", "-c", "user.email=b", "commit", "-qm", "i")
+    nest_repo(src)
+    r = convert_one(src, tmp_path / "p.git", ident, flatten=frozenset({"sub/inner"}))
+    assert r.status == "mirrored" and "dirty_worktree" in r.issues, r
+    out = git("ls-tree", "-r", "--format=%(objectmode) %(path)", "swh-worktree-snapshot",
+              git_dir=tmp_path / "p.git")
+    assert out.splitlines() == ["100644 a", "100644 sub/inner/z"]
+
+
+def test_flatten_nested_validation(tmp_path: Path, ident: Identity) -> None:
+    make_tree(tmp_path / "src", {"a/x": "1", "b/x": "1", "c/x": "1"})
+    nest_repo(tmp_path / "src" / "b")
+    nest_repo(tmp_path / "src" / "c")
+    with pytest.raises(EmbeddedGitAbort) as exc:  # c is not listed: still aborts
+        convert_all(tmp_path / "src", tmp_path / "out", 1, ident,
+                    flatten_nested=["b/sub/inner"])
+    assert list(exc.value.folders) == [str(tmp_path / "src" / "c")]
+    with pytest.raises(ValueError, match="not a nested git repo: b/sub"):
+        convert_all(tmp_path / "src", tmp_path / "out", 1, ident, flatten_nested=["b/sub"])
+    assert not (tmp_path / "out").exists()
+    res = convert_all(tmp_path / "src", tmp_path / "out", 1, ident,
+                      flatten_nested=["b/sub/inner", "c/sub/inner"])
+    assert [r.status for r in res] == ["created"] * 3
+    assert [r.issues for r in res] == [[], ["nested_git_flattened"], ["nested_git_flattened"]]
+
+
+def test_dangling_gitfile_is_plain_dir(tmp_path: Path, ident: Identity) -> None:
+    # submodule copied without its parent: .git file points at a missing modules dir
+    src = make_tree(tmp_path / "p", {"a": "1", "shdr/s.glsl": "s",
+                                     "shdr/.git": "gitdir: ../.git/modules/shdr\n"})
+    r = convert_one(src, tmp_path / "p.git", ident)
+    assert r.status == "created" and r.issues == ["dangling_gitfile_dropped"], r
+    assert set(ls_tree(tmp_path / "p.git")) == {"a", "shdr/s.glsl"}
+    # a gitfile pointing at a real git dir is still a nested repo
+    real = tmp_path / "real"
+    git("init", "-q", "--bare", str(real))
+    (src / "shdr" / ".git").write_text(f"gitdir: {real}\n")
+    assert convert_one(src, tmp_path / "q.git", ident).status == "error"
+
+
 def test_own_git_without_commits(tmp_path: Path, ident: Identity) -> None:
     own = make_tree(tmp_path / "q", {"a": "1"})
     git("init", "-q", str(own))  # no commits: falls back to a synthetic commit
