@@ -7,8 +7,11 @@ import json
 import shutil
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-from swhprep._check import check_all, load_manifest
+import pytest
+
+from swhprep._check import Check, check_all, load_manifest
 from swhprep._convert import Identity, convert_all
 from swhprep._git import git
 from swhprep._manifest import build_manifest, origin_urls, write_manifest
@@ -67,6 +70,27 @@ def test_check_negative_missing_repo(tmp_path: Path, ident: Identity, git_http: 
     shutil.rmtree(srv / "g" / "p2.git")
     res = check_all(manifest, git_http(srv))
     assert [c.ok for c in res] == [True, False]
+
+
+def test_check_retries_timeouts_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    from swhprep import _check
+    calls: list[str] = []
+    answers = {"https://h/a.git": [Check("https://h/a.git", False, "TimeoutExpired: x"),
+                                   Check("https://h/a.git", True)],
+               "https://h/b.git": [Check("https://h/b.git", False, "GitError: 404")],
+               "https://h/c.git": [Check("https://h/c.git", False, "TimeoutExpired: x"),
+                                   Check("https://h/c.git", False, "TimeoutExpired: x")]}
+
+    def fake(url: str, timeout: float = 120) -> Check:
+        calls.append(url)
+        return answers[url].pop(0)
+
+    monkeypatch.setattr(_check, "ls_remote", fake)
+    m: dict[str, Any] = {"/a.git": {}, "/b.git": {}, "/c.git": {}}
+    res = check_all(m, "https://h/", jobs=1)
+    assert [c.ok for c in res] == [True, False, False]
+    assert calls.count("https://h/a.git") == 2 and calls.count("https://h/b.git") == 1
+    assert calls.count("https://h/c.git") == 2  # retried once, not forever
 
 
 def test_check_boundary_subpath(tmp_path: Path, ident: Identity, git_http: Serve) -> None:

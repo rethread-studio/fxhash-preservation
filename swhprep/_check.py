@@ -52,6 +52,16 @@ def ls_remote(url: str, timeout: float = 120) -> Check:
     return Check(url, True)
 
 
+def _ls_remote_retrying(url: str) -> Check:
+    # A connection that stalls before reaching the server (seen 1-2 times per 27.6k
+    # origins, absent from the server's access log) times out; one retry tells it apart
+    # from a real failure. Errors other than timeouts are not retried.
+    c = ls_remote(url)
+    if not c.ok and (c.error or "").startswith("TimeoutExpired"):
+        c = ls_remote(url)
+    return c
+
+
 def check_all(
     manifest: dict[str, Any],
     forge_url: str,
@@ -62,7 +72,7 @@ def check_all(
     """ls-remote every origin URL derived from `manifest` and `forge_url`."""
     results: list[Check] = []
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        for c in pool.map(ls_remote, origin_urls(manifest, forge_url)):
+        for c in pool.map(_ls_remote_retrying, origin_urls(manifest, forge_url)):
             results.append(c)
             if on_result:
                 on_result(c)
