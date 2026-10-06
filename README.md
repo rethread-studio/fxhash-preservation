@@ -113,7 +113,8 @@ FLAT=(--flatten-nested 'fxhash-1.0-tezos/2023/Aweille!__28348/library'
 # the 42 source git repos: one branch each, uncommitted work committed on it (user's call)
 # the commit of each project: author = committer = the artist, dated at the project's
 # creation on chain (see "Artist and date" below)
-python scripts/fxhash_identities.py "$SRC" data/fxhash-meta.json.gz ids.json
+python scripts/fxhash_identities.py "$SRC" data/fxhash-meta.json.gz ids.json \
+    data/name-overrides.json
 OPTS=(--depth 3 --ignore-filemode --head-only "${FLAT[@]}" --identity-map ids.json)
 
 # 0. scan: nested git repos, names, empty folders, all-executable folders (writes nothing)
@@ -174,9 +175,12 @@ down, so the snapshot is the source of record.
   Names are stored verbatim (`<`/`>` become `‹`/`›`).
 - email: `<author address>@fxhash.xyz`, using the collab contract address for collaborations.
 
+`data/name-overrides.json` replaces the on-chain name when the artist asked for another
+one: `ALT null` → `OGCrayon` (64 projects, one of them a collaboration), as fxhashArchive
+also does.
+
 Cross-checks: every Tezos `created_at` equals fxhashArchive's capture of the v1 API
-(27,051/27,051). Names match it on 25,805 projects and differ only on one artist's requested
-display rename (`ALT null` on chain, `OGCrayon` there, 63 projects).
+(27,051/27,051), and with the override every solo Tezos name it has matches.
 
 ## Validation
 

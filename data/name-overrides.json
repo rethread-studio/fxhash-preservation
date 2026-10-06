@@ -1,0 +1,11 @@
+{
+  "_readme": "Artist display names that replace the on-chain name, by wallet address. Only for an artist's own request; keep the on-chain name in `was`.",
+  "names": {
+    "tz1PpGEgBg2ZKk4PAeXh6hxSCqCpHA4YVwCy": {
+      "name": "OGCrayon",
+      "was": "ALT null",
+      "source": "artist's request recorded by killedbyapixel/fxhashArchive data/artist-names.json (2026-08-25)",
+      "decided": "Martin Monperrus, 2026-10-06"
+    }
+  }
+}
