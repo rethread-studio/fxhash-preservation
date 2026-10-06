@@ -88,7 +88,9 @@ All commands accept `--json` and exit non-zero when something needs attention.
 
 ## Deployment: fxhash.gakoy.com on rootmab
 
-Live since 2026-10-05 and empty until the data lands. Already done: the OVH A record
+Serving all 27,596 fxhash repos (80 GB, 276k files) since 2026-10-06. `check` passed on
+every origin (one transient timeout, fine on retry). The upload took 98 min at ~14 MB/s
+and the full check 43 min at 16 jobs. Already done: the OVH A record
 `fxhash` → 37.187.127.139 (id 5439621500); the snippet and vhost installed on rootmab;
 the Let's Encrypt cert with HTTP→HTTPS redirect; `/srv/fxhash-git` (755, martin). An
 HTTPS smoke test (check, clone, 304, receive-pack 403) passed and was cleaned up.
