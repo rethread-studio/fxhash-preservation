@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -35,6 +35,19 @@ class Identity:
         m = re.fullmatch(r"\s*(.+?)\s*<([^<>]+)>\s*", author)
         if not m:
             raise ValueError(f"author must look like 'Name <email>', got {author!r}")
+        return cls(m.group(1), m.group(2), cls._git_date(date))
+
+    @classmethod
+    def make(cls, name: str, email: str, date: str) -> Identity:
+        """Identity from separate fields; refuses what git would silently mangle."""
+        if not name.strip() or any(c in name for c in "<>\n\0"):
+            raise ValueError(f"unusable name for git: {name!r}")
+        if not email or any(c in email for c in "<> \n\0"):
+            raise ValueError(f"unusable email for git: {email!r}")
+        return cls(name.strip(), email, cls._git_date(date))
+
+    @staticmethod
+    def _git_date(date: str) -> str:
         dt = datetime.fromisoformat(date)
         if dt.tzinfo is None:
             raise ValueError(f"date must carry a timezone, e.g. 2026-01-01T00:00:00+00:00: {date!r}")
@@ -44,7 +57,7 @@ class Identity:
         sign = "+" if minutes >= 0 else "-"
         tz = f"{sign}{abs(minutes) // 60:02d}{abs(minutes) % 60:02d}"
         # "@": git rejects a bare "0 +0000" (epoch 0) as an invalid date; same stored value
-        return cls(m.group(1), m.group(2), f"@{int(dt.timestamp())} {tz}")
+        return f"@{int(dt.timestamp())} {tz}"
 
     def env(self) -> dict[str, str]:
         return {
@@ -344,8 +357,8 @@ def _mirror(
     tree = _snapshot_tree(source, work, ignore_filemode=ignore_filemode, force=False,
                           start=head, flatten=flatten)
     if tree != git("rev-parse", f"{head}^{{tree}}", git_dir=work):
-        msg = f"Uncommitted working tree of {source.name}\n".encode()
-        snap = git("commit-tree", tree, "-p", head, git_dir=work, env=ident.env(), input=msg)
+        msg = f"Uncommitted working tree of {source.name}\n"
+        snap = _write_commit(work, tree, [head], ident, msg)
         if head_only:
             git("update-ref", "HEAD", snap, head, git_dir=work)
             head = snap
@@ -469,11 +482,25 @@ def _add_flat(
         git("update-index", "-z", "--index-info", git_dir=repo, env=env, input=info)
 
 
+def _write_commit(repo: Path, tree: str, parents: list[str], ident: Identity, msg: str) -> str:
+    """Write a commit object byte for byte (author = committer = `ident`).
+
+    Same bytes, hence same id, as `git commit-tree`, except that names are kept verbatim:
+    commit-tree trims characters such as `.,:;"'` from the ends of names.
+    """
+    when = ident.date.removeprefix("@")
+    who = f"{ident.name} <{ident.email}> {when}"
+    head = [f"tree {tree}", *(f"parent {p}" for p in parents),
+            f"author {who}", f"committer {who}"]
+    body = "\n".join(head) + "\n\n" + msg
+    return git("hash-object", "-t", "commit", "-w", "--stdin", git_dir=repo,
+               input=body.encode())
+
+
 def _commit_tree(
     source: Path, repo: Path, ident: Identity, res: Result, *, ignore_filemode: bool,
     flatten: list[str] | None = None,
 ) -> None:
-    env = ident.env()
     # force: archive files even when a .gitignore inside the source excludes them
     tree = _snapshot_tree(source, repo, ignore_filemode=ignore_filemode, force=True,
                           flatten=flatten)
@@ -482,9 +509,8 @@ def _commit_tree(
     if parent and git("rev-parse", f"{parent}^{{tree}}", git_dir=repo) == tree:
         res.status, res.commit = "unchanged", parent
         return
-    msg = f"Import of {source.name}\n".encode()
-    args = ["commit-tree", tree] + (["-p", parent] if parent else [])
-    commit = git(*args, git_dir=repo, env=env, input=msg)
+    commit = _write_commit(repo, tree, [parent] if parent else [], ident,
+                           f"Import of {source.name}\n")
     git("update-ref", f"refs/heads/{BRANCH}", commit, git_dir=repo)
     res.status, res.commit = ("updated" if parent else "created"), commit
 
@@ -493,7 +519,7 @@ def convert_all(
     src: Path,
     dest: Path,
     depth: int,
-    ident: Identity,
+    ident: Identity | None,
     *,
     jobs: int = 4,
     ignore_filemode: bool = False,
@@ -502,6 +528,7 @@ def convert_all(
     on_result: Callable[[Result], None] | None = None,
     flatten_nested: Iterable[str] = (),
     head_only: bool = False,
+    identities: Mapping[str, Identity] | None = None,
 ) -> list[Result]:
     """Convert every source folder found at `depth` under `src` into `dest/<name>.git`.
 
@@ -509,8 +536,22 @@ def convert_all(
     holds a nested git repo (EmbeddedGitAbort lists them) not named in `flatten_nested`
     (paths relative to `src`, e.g. "group/project/lib"). A listed path that isn't a nested
     repo is a ValueError.
+
+    `identities` maps a folder path relative to `src` to the identity and date of its
+    commit, replacing `ident`; a folder missing from it is a ValueError (nothing written).
     """
     pairs = plan(src, depth)
+    if identities is not None:
+        idents = [identities.get(s.relative_to(src).as_posix()) for s, _ in pairs]
+        missing_ids = [s.relative_to(src).as_posix()
+                       for (s, _), i in zip(pairs, idents, strict=True) if i is None]
+        if missing_ids:
+            raise ValueError(f"identity map: {len(missing_ids)} folder(s) missing, e.g. "
+                             f"{', '.join(missing_ids[:3])}")
+    elif ident is None:
+        raise ValueError("an identity or an identity map is required")
+    else:
+        idents = [ident] * len(pairs)
     wanted = {Path(f).as_posix().strip("/") for f in flatten_nested}
     flats: list[frozenset[str]] = []
     for s, _ in pairs:
@@ -530,15 +571,16 @@ def convert_all(
         if bad:
             raise EmbeddedGitAbort(bad)
 
-    def work(item: tuple[tuple[Path, str], tuple[int, list[str], list[str]], frozenset[str]]
-             ) -> Result:
-        (s, name), scan, flat = item
-        return convert_one(s, dest / name, ident, ignore_filemode=ignore_filemode,
+    def work(item: tuple[tuple[Path, str], tuple[int, list[str], list[str]], frozenset[str],
+                         Identity | None]) -> Result:
+        (s, name), scan, flat, who = item
+        assert who is not None
+        return convert_one(s, dest / name, who, ignore_filemode=ignore_filemode,
                            rebuild=rebuild, dry_run=dry_run, scan=scan, flatten=flat,
                            head_only=head_only)
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        for r in pool.map(work, zip(pairs, scans, flats, strict=True)):
+        for r in pool.map(work, zip(pairs, scans, flats, idents, strict=True)):
             results.append(r)
             if on_result:
                 on_result(r)

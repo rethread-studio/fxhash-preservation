@@ -206,6 +206,57 @@ def test_ignore_filemode(tmp_path: Path, ident: Identity) -> None:
     assert convert_one(src, tmp_path / "q.git", ident).issues == []
 
 
+def test_identity_map_per_folder(tmp_path: Path) -> None:
+    make_tree(tmp_path / "src", {"a/x": "1", "b/x": "1"})
+    ids = {"a": Identity.make("DooDamonnn::", "tz1abc@fxhash.xyz", "2022-05-01T10:00:00+00:00"),
+           "b": Identity.make("A & B", "KT1xyz@fxhash.xyz", "2023-01-02T03:04:05+02:00")}
+    res = convert_all(tmp_path / "src", tmp_path / "out", 1, None, identities=ids)
+    assert [r.status for r in res] == ["created", "created"]
+    fmt = ["log", "-1", "--format=%an|%ae|%ad|%cn|%ce|%cd", "--date=raw", "main"]
+    # trailing "::" kept: `git commit-tree` would have trimmed it
+    assert git(*fmt, git_dir=tmp_path / "out" / "a.git") == (
+        "DooDamonnn::|tz1abc@fxhash.xyz|1651399200 +0000|"
+        "DooDamonnn::|tz1abc@fxhash.xyz|1651399200 +0000")
+    assert git(*fmt, git_dir=tmp_path / "out" / "b.git") == (
+        "A & B|KT1xyz@fxhash.xyz|1672621445 +0200|A & B|KT1xyz@fxhash.xyz|1672621445 +0200")
+    for r in ["a", "b"]:
+        git("fsck", "--strict", "--no-progress", git_dir=tmp_path / "out" / f"{r}.git")
+
+
+def test_identity_map_missing_folder_writes_nothing(tmp_path: Path, ident: Identity) -> None:
+    make_tree(tmp_path / "src", {"a/x": "1", "b/x": "1"})
+    with pytest.raises(ValueError, match="1 folder.*missing.*b"):
+        convert_all(tmp_path / "src", tmp_path / "out", 1, ident, identities={"a": ident})
+    assert not (tmp_path / "out").exists()
+
+
+def test_identity_make_rejects_what_git_cannot_store() -> None:
+    for bad in ["", "  ", "<Draw>", "a\nb"]:
+        with pytest.raises(ValueError):
+            Identity.make(bad, "x@fxhash.xyz", "2020-01-01T00:00:00+00:00")
+    with pytest.raises(ValueError):
+        Identity.make("ok", "a b@x", "2020-01-01T00:00:00+00:00")
+    assert Identity.make(" michael ", "x@y", "2020-01-01T00:00:00+00:00").name == "michael"
+
+
+def test_cli_identity_map(tmp_path: Path) -> None:
+    import json
+
+    from swhprep.cli import main
+    src = make_tree(tmp_path / "src", {"p/a": "1"})
+    m = tmp_path / "ids.json"
+    m.write_text(json.dumps({"p": {"name": "Udit Mahajan", "email": "tz1iw@fxhash.xyz",
+                                   "date": "2024-03-30T00:30:45+00:00"}}))
+    out = tmp_path / "out"
+    assert main(["convert", str(src), str(out), "--identity-map", str(m)]) == 0
+    assert git("log", "-1", "--format=%an %cd", "--date=raw", "main", git_dir=out / "p.git") == (
+        "Udit Mahajan 1711758645 +0000")
+    assert main(["convert", str(src), str(out)]) == 2  # no identity at all
+    assert main(["convert", str(src), str(out), "--author", "A <a@b>"]) == 2  # no --date
+    m.write_text(json.dumps({"p": {"name": "x"}}))
+    assert main(["convert", str(src), str(tmp_path / "o2"), "--identity-map", str(m)]) == 2
+
+
 def test_cli_flags_all_executable(tmp_path: Path) -> None:
     from swhprep.cli import main
     src = make_tree(tmp_path / "src", {"p/a": "1"})

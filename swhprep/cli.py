@@ -27,12 +27,27 @@ def _summary(counter: Counter[str], as_json: bool, extra: dict[str, Any]) -> Non
             print(f"{k:<24} {v}")
 
 
+def _load_identities(path: str) -> dict[str, Identity]:
+    """JSON {"<folder relative to SRC>": {"name": ..., "email": ..., "date": ISO 8601}}."""
+    with open(path) as f:
+        raw = json.load(f)
+    try:
+        return {k: Identity.make(v["name"], v["email"], v["date"]) for k, v in raw.items()}
+    except (KeyError, TypeError) as e:
+        raise ValueError(f"{path}: each entry needs name, email and date ({e})") from e
+
+
 def cmd_convert(args: argparse.Namespace) -> int:
-    ident = Identity.parse(args.author, args.date)
+    if (args.author is None) != (args.date is None):
+        raise ValueError("--author and --date go together")
+    if args.author is None and args.identity_map is None:
+        raise ValueError("give --author and --date, or --identity-map")
+    ident = Identity.parse(args.author, args.date) if args.author is not None else None
+    identities = _load_identities(args.identity_map) if args.identity_map else None
     try:
         with contextlib.ExitStack() as stack:
             report = stack.enter_context(open(args.report, "a")) if args.report else None
-            counter = _run_convert(args, ident, report)
+            counter = _run_convert(args, ident, identities, report)
     except EmbeddedGitAbort as e:
         if args.json:
             print(json.dumps({"aborted": "embedded_git", "folders": e.folders}))
@@ -51,7 +66,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
     return 1 if bad else 0
 
 
-def _run_convert(args: argparse.Namespace, ident: Identity, report: IO[str] | None) -> Counter[str]:
+def _run_convert(args: argparse.Namespace, ident: Identity | None,
+                 identities: dict[str, Identity] | None,
+                 report: IO[str] | None) -> Counter[str]:
     counter: Counter[str] = Counter()
 
     def on_result(r: Result) -> None:
@@ -67,7 +84,8 @@ def _run_convert(args: argparse.Namespace, ident: Identity, report: IO[str] | No
     convert_all(Path(args.src), Path(args.dest), args.depth, ident, jobs=args.jobs,
                 ignore_filemode=args.ignore_filemode, rebuild=args.rebuild,
                 dry_run=args.dry_run, on_result=on_result,
-                flatten_nested=args.flatten_nested, head_only=args.head_only)
+                flatten_nested=args.flatten_nested, head_only=args.head_only,
+                identities=identities)
     return counter
 
 
@@ -107,8 +125,12 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("dest", help="root of the served bare repos")
     c.add_argument("--depth", type=int, default=1,
                    help="a repo is any directory exactly this deep under SRC (default 1)")
-    c.add_argument("--author", required=True, help="'Name <email>' for author and committer")
-    c.add_argument("--date", required=True, help="ISO 8601 date with timezone for every commit")
+    c.add_argument("--author", help="'Name <email>' for author and committer")
+    c.add_argument("--date", help="ISO 8601 date with timezone for every commit")
+    c.add_argument("--identity-map", metavar="FILE",
+                   help="JSON {folder relative to SRC: {name, email, date}}: per-folder author, "
+                        "committer and date, instead of --author/--date; every folder must "
+                        "be listed")
     c.add_argument("--jobs", type=int, default=4)
     c.add_argument("--ignore-filemode", action="store_true",
                    help="store every file as 100644 (for exFAT/NTFS where all look executable)")

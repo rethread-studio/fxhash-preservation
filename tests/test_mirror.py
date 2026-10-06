@@ -162,6 +162,18 @@ def test_head_only_dirty_commits_on_branch(tmp_path: Path, ident: Identity) -> N
     assert again.status == "unchanged" and again.commit == tip
 
 
+def test_head_only_snapshot_uses_given_identity(tmp_path: Path) -> None:
+    src = make_repo(tmp_path / "p")
+    (src / "a.txt").write_text("dirty\n")
+    who = Identity.make("Artist.", "tz1q@fxhash.xyz", "2023-06-01T12:00:00+00:00")
+    r = convert_one(src, tmp_path / "p.git", who, head_only=True)
+    assert r.status == "mirrored", r.error
+    assert git("log", "-1", "--format=%an|%ae|%cn|%cd", "--date=raw", "master",
+               git_dir=tmp_path / "p.git") == "Artist.|tz1q@fxhash.xyz|Artist.|1685620800 +0000"
+    # the real history is untouched
+    assert git("log", "-1", "--format=%an", "master^", git_dir=tmp_path / "p.git") == "Dev"
+
+
 def test_head_only_detached(tmp_path: Path, ident: Identity) -> None:
     src = make_repo(tmp_path / "p")
     first = git("-C", str(src), "rev-parse", "v1")
