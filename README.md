@@ -129,6 +129,14 @@ swhprep manifest "$DEST" "$DEST/manifest.js.gz"
 # --chmod: nginx/fcgiwrap (www-data) must read everything; -a alone copies local perms,
 # including those of $DEST itself onto /srv/fxhash-git (a 0750 there = 403 everywhere)
 rsync -a --delete --chmod=Da+rx,Fa+r "$DEST/" rootmab:/srv/fxhash-git/
+#    shortcut when only commit identities changed (trees already on the server):
+#    ship the tip commits (a few MB), not the packs (80 GB, ~100 min)
+python scripts/export_commits.py "$DEST" commits.jsonl.gz
+scp scripts/apply_commits.py commits.jsonl.gz rootmab:/tmp/
+ssh rootmab 'python3 /tmp/apply_commits.py /srv/fxhash-git /tmp/commits.jsonl.gz' > fp.tsv
+#    then compare fp.tsv with the fingerprints in "$DEST/manifest.js.gz" and upload the
+#    manifest. The server keeps the old commits as unreachable objects, and its packs no
+#    longer match $DEST byte for byte, so the next full rsync moves everything again.
 
 # 3. verify from outside; must print no ❌ and exit 0
 swhprep check https://fxhash.gakoy.com/manifest.js.gz --forge-url https://fxhash.gakoy.com/
