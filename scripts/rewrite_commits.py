@@ -47,8 +47,9 @@ def main() -> None:
     if len(sys.argv) != 6:
         raise SystemExit(__doc__)
     src, dest, depth = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
-    with open(sys.argv[4]) as f:
-        ids = {k: Identity.make(v["name"], v["email"], v["date"]) for k, v in json.load(f).items()}
+    with open(sys.argv[4]) as idf:
+        ids = {k: Identity.make(v["name"], v["email"], v["date"])
+               for k, v in json.load(idf).items()}
     jobs = [(dest / name, name, ids[s.relative_to(src).as_posix()]) for s, name in plan(src, depth)]
     with ThreadPoolExecutor(8) as pool:
         rows = list(pool.map(lambda j: rewrite(*j), jobs))
