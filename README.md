@@ -111,16 +111,17 @@ FLAT=(--flatten-nested 'fxhash-1.0-tezos/2023/Aweille!__28348/library'
       --flatten-nested 'fxhash-1.0-tezos/2023/Gridscape Symphony__29177/p5.gif.js')
 # the drive is ext4, but all 663k source files are mode 777 (copy artefact): ignore modes
 # the 42 source git repos: one branch each, uncommitted work committed on it (user's call)
-OPTS=(--depth 3 --ignore-filemode --head-only "${FLAT[@]}")
+# the commit of each project: author = committer = the artist, dated at the project's
+# creation on chain (see "Artist and date" below)
+python scripts/fxhash_identities.py "$SRC" data/fxhash-meta.json.gz ids.json
+OPTS=(--depth 3 --ignore-filemode --head-only "${FLAT[@]}" --identity-map ids.json)
 
 # 0. scan: nested git repos, names, empty folders, all-executable folders (writes nothing)
-swhprep convert "$SRC" "$DEST" "${OPTS[@]}" --dry-run --report scan.jsonl \
-    --author "Benoit Baudry <benoit.baudry@umontreal.ca>" --date 1970-01-01T00:00:00+00:00
+swhprep convert "$SRC" "$DEST" "${OPTS[@]}" --dry-run --report scan.jsonl
 
-# 1. convert (synthetic commits: Benoit Baudry, 1970-01-01 UTC); exit 3 = nested repos
+# 1. convert; exit 3 = nested repos
 #    ~1h50 for the 27.6k on 8 jobs (CPU-bound in repack)
-swhprep convert "$SRC" "$DEST" "${OPTS[@]}" --jobs 8 --report convert.jsonl \
-    --author "Benoit Baudry <benoit.baudry@umontreal.ca>" --date 1970-01-01T00:00:00+00:00
+swhprep convert "$SRC" "$DEST" "${OPTS[@]}" --jobs 8 --report convert.jsonl
 swhprep manifest "$DEST" "$DEST/manifest.js.gz"
 
 # 2. ship
@@ -156,6 +157,26 @@ ssh rootmab 'sudo install -m644 /tmp/swh-git-locations.conf /etc/nginx/snippets/
   sudo nginx -t && sudo systemctl reload nginx &&
   sudo certbot --nginx --redirect --cert-name fxhash.gakoy.com -d fxhash.gakoy.com'
 ```
+
+### Artist and date
+
+`data/fxhash-meta.json.gz` is a snapshot of the fxhash v2 GraphQL API (28,194 projects,
+both chains, fetched 2026-10-06), and `data/fxhash-api-raw.json.gz` keeps the rows exactly
+as the API returned them. Re-fetch with `scripts/fetch_fxhash_meta.py`. fxhash is shut
+down, so the snapshot is the source of record.
+
+`scripts/fxhash_identities.py` derives one identity per project:
+- date: `created_at`, i.e. the issuer creation on Tezos and the contract deployment on
+  EVM. It is not `mint_opens_at`, the sale date found in `_source.txt`.
+- name: on Tezos, the artist's on-chain name (FXHASH User Registry), else their fxhash
+  username, else the address. 169 artists set no name anywhere, so the address is their
+  name. On EVM, the fxhash username is the only name. A collaboration is named `A & B`.
+  Names are stored verbatim (`<`/`>` become `‹`/`›`).
+- email: `<author address>@fxhash.xyz`, using the collab contract address for collaborations.
+
+Cross-checks: every Tezos `created_at` equals fxhashArchive's capture of the v1 API
+(27,051/27,051). Names match it on 25,805 projects and differ only on one artist's requested
+display rename (`ALT null` on chain, `OGCrayon` there, 63 projects).
 
 ## Validation
 
