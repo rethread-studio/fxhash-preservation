@@ -1,7 +1,7 @@
 # rootmab: /etc/nginx/sites-available/fxhash-preservation.rethread.art
 # Git forge of the fxhash projects, crawled by Software Heritage (Add Forge Now,
 # type grokmirror, URL https://fxhash-preservation.rethread.art/). Repos live in
-# /srv/fxhash-git. fxhash.gakoy.com serves the same tree (first name, kept working).
+# /srv/fxhash-git. Replaces fxhash.gakoy.com (removed 2026-10-06).
 #
 # Installed HTTP-only; then
 #   sudo certbot --nginx --redirect --cert-name fxhash-preservation.rethread.art \

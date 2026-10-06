@@ -38,7 +38,7 @@ swhprep convert "$SRC" "$DEST" --depth 1 --jobs 8 --report convert.jsonl \
 swhprep manifest "$DEST" "$DEST/manifest.js.gz"
 
 # 4. serve: deploy/swh-git-locations.conf included in a vhost (deploy/nginx-swh-git.conf,
-#    or deploy/fxhash.gakoy.com with TLS), then from outside the server:
+#    or deploy/fxhash-preservation.rethread.art with TLS), then from outside the server:
 swhprep check https://git.example.org/manifest.js.gz --forge-url https://git.example.org/
 
 # 5. https://archive.softwareheritage.org/add-forge/request/create/
@@ -91,16 +91,15 @@ All commands accept `--json` and exit non-zero when something needs attention.
 
 ## Deployment: fxhash-preservation.rethread.art on rootmab
 
-Canonical URL since 2026-10-06: `https://fxhash-preservation.rethread.art/` (DNS at Gandi,
-vhost `deploy/fxhash-preservation.rethread.art`, own cert). The first name,
-`https://fxhash.gakoy.com/`, serves the same `/srv/fxhash-git` and is kept working.
+URL: `https://fxhash-preservation.rethread.art/` (DNS at Gandi: A record to
+37.187.127.139). The first name, `fxhash.gakoy.com`, was removed on 2026-10-06: vhost,
+certificate and OVH A record.
 
 Serving all 27,596 fxhash repos (80 GB, 276k files) since 2026-10-06. `check` passed on
 every origin (one transient timeout, fine on retry). The upload took 98 min at ~14 MB/s
-and the full check 43 min at 16 jobs. Already done: the OVH A record
-`fxhash` → 37.187.127.139 (id 5439621500); the snippet and vhost installed on rootmab;
-the Let's Encrypt cert with HTTP→HTTPS redirect; `/srv/fxhash-git` (755, martin). An
-HTTPS smoke test (check, clone, 304, receive-pack 403) passed and was cleaned up.
+and the full check 43 min at 16 jobs. Already done: the snippet and vhost installed on
+rootmab; the Let's Encrypt cert with HTTP→HTTPS redirect; `/srv/fxhash-git` (755,
+martin). An HTTPS smoke test (check, clone, 304, receive-pack 403) passed.
 rootmab runs nginx 1.24, git 2.43 and fcgiwrap, with 1.6 TB free. Infra conventions are
 in `../rootmab/gakoy.md`.
 
@@ -164,17 +163,11 @@ certbot's 443 lines, so re-run certbot afterwards.
 
 ```sh
 ssh rootmab 'sudo install -d -o martin -m755 /srv/fxhash-git'
-# DNS: A record fxhash.gakoy.com -> 37.187.127.139 (OVH API, no wildcard; agent-ovh)
-scp deploy/swh-git-locations.conf deploy/fxhash.gakoy.com rootmab:/tmp/
-ssh rootmab 'sudo install -m644 /tmp/swh-git-locations.conf /etc/nginx/snippets/ &&
-  sudo install -m644 /tmp/fxhash.gakoy.com /etc/nginx/sites-available/ &&
-  sudo ln -sf ../sites-available/fxhash.gakoy.com /etc/nginx/sites-enabled/ &&
-  sudo nginx -t && sudo systemctl reload nginx &&
-  sudo certbot --nginx --redirect --cert-name fxhash.gakoy.com -d fxhash.gakoy.com'
-# canonical name, same root; DNS: fxhash-preservation.rethread.art A 37.187.127.139 (Gandi)
+# DNS: fxhash-preservation.rethread.art A 37.187.127.139 (Gandi)
 H=fxhash-preservation.rethread.art
-scp deploy/$H rootmab:/tmp/
-ssh rootmab "sudo install -m644 /tmp/$H /etc/nginx/sites-available/ &&
+scp deploy/swh-git-locations.conf deploy/$H rootmab:/tmp/
+ssh rootmab "sudo install -m644 /tmp/swh-git-locations.conf /etc/nginx/snippets/ &&
+  sudo install -m644 /tmp/$H /etc/nginx/sites-available/ &&
   sudo ln -sf ../sites-available/$H /etc/nginx/sites-enabled/ &&
   sudo nginx -t && sudo systemctl reload nginx && sleep 5 &&
   sudo certbot --nginx --redirect --cert-name $H -d $H"
