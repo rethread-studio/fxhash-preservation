@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end: convert synthetic folders (plain + one real git repo), write the manifest,
-# serve with each shipped nginx site (generic and fxhash.gakoy.com, both including
+# serve with each shipped nginx site (generic and the two fxhash hosts, all including
 # deploy/swh-git-locations.conf) under nginx + fcgiwrap in docker, then check + clone.
 set -euo pipefail
 
@@ -30,7 +30,7 @@ CMD spawn-fcgi -s /run/fcgiwrap.socket -M 766 -u www-data -g www-data /usr/sbin/
     && exec nginx -g "daemon off;"
 EOF
 
-for site in nginx-swh-git.conf fxhash.gakoy.com; do
+for site in nginx-swh-git.conf fxhash.gakoy.com fxhash-preservation.rethread.art; do
     docker rm -f "$name" >/dev/null 2>&1 || true
     docker run -d --name "$name" -p 127.0.0.1::80 \
         -v "$work/srv:/srv/git:ro" -v "$work/srv:/srv/fxhash-git:ro" \

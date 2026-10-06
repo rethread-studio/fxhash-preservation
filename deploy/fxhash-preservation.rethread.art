@@ -1,0 +1,29 @@
+# rootmab: /etc/nginx/sites-available/fxhash-preservation.rethread.art
+# Git forge of the fxhash projects, crawled by Software Heritage (Add Forge Now,
+# type grokmirror, URL https://fxhash-preservation.rethread.art/). Repos live in
+# /srv/fxhash-git. fxhash.gakoy.com serves the same tree (first name, kept working).
+#
+# Installed HTTP-only; then
+#   sudo certbot --nginx --redirect --cert-name fxhash-preservation.rethread.art \
+#        -d fxhash-preservation.rethread.art
+# adds the "managed by Certbot" 443 lines and the HTTP->HTTPS redirect block.
+# DNS: rethread.art is at Gandi (not OVH).
+
+server {
+    listen 80;
+    server_name fxhash-preservation.rethread.art;
+    server_tokens off;
+
+    root /srv/fxhash-git;
+
+    include /etc/nginx/snippets/swh-git-locations.conf;
+
+    location = / {
+        default_type text/plain;
+        return 200 "Source code of fxhash projects, one git repository per project, archived by Software Heritage.\nRepository list: https://fxhash-preservation.rethread.art/manifest.js.gz\n";
+    }
+
+    location / {
+        return 404;
+    }
+}

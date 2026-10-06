@@ -89,7 +89,11 @@ All commands accept `--json` and exit non-zero when something needs attention.
 - `--rebuild` re-snapshots existing repos. A changed folder gets a child commit, so SWH
   sees a new revision.
 
-## Deployment: fxhash.gakoy.com on rootmab
+## Deployment: fxhash-preservation.rethread.art on rootmab
+
+Canonical URL since 2026-10-06: `https://fxhash-preservation.rethread.art/` (DNS at Gandi,
+vhost `deploy/fxhash-preservation.rethread.art`, own cert). The first name,
+`https://fxhash.gakoy.com/`, serves the same `/srv/fxhash-git` and is kept working.
 
 Serving all 27,596 fxhash repos (80 GB, 276k files) since 2026-10-06. `check` passed on
 every origin (one transient timeout, fine on retry). The upload took 98 min at ~14 MB/s
@@ -139,18 +143,20 @@ ssh rootmab 'python3 /tmp/apply_commits.py /srv/fxhash-git /tmp/commits.jsonl.gz
 #    longer match $DEST byte for byte, so the next full rsync moves everything again.
 
 # 3. verify from outside; must print no ❌ and exit 0
-swhprep check https://fxhash.gakoy.com/manifest.js.gz --forge-url https://fxhash.gakoy.com/
+swhprep check https://fxhash-preservation.rethread.art/manifest.js.gz \
+    --forge-url https://fxhash-preservation.rethread.art/
 ```
 
 4. Martin files Add Forge Now at https://archive.softwareheritage.org/add-forge/request/create/
    (log in to SWH first):
    - Forge type: `grokmirror`
-   - Forge URL: `https://fxhash.gakoy.com/`
+   - Forge URL: `https://fxhash-preservation.rethread.art/`
    - Contact name: `Martin Monperrus`
    - Contact email: `monperrus@kth.se`
-   - Comment: `About 27,000 git repositories, one per fxhash project, listed in
-     https://fxhash.gakoy.com/manifest.js.gz (grokmirror format), served over smart HTTPS.
-     Most are single-commit snapshots of source folders; some keep their original history.
+   - Comment: `About 27,600 git repositories, one per fxhash project, listed in
+     https://fxhash-preservation.rethread.art/manifest.js.gz (grokmirror format), served
+     over smart HTTPS. Each is a snapshot of the project's source, committed as its artist
+     at the project's creation date; some keep their original history.
      The server is a small machine: please use the default Add Forge Now rate limits.`
 
 Server setup, already done, kept for a rebuild. Re-installing the vhost file overwrites
@@ -165,6 +171,15 @@ ssh rootmab 'sudo install -m644 /tmp/swh-git-locations.conf /etc/nginx/snippets/
   sudo ln -sf ../sites-available/fxhash.gakoy.com /etc/nginx/sites-enabled/ &&
   sudo nginx -t && sudo systemctl reload nginx &&
   sudo certbot --nginx --redirect --cert-name fxhash.gakoy.com -d fxhash.gakoy.com'
+# canonical name, same root; DNS: fxhash-preservation.rethread.art A 37.187.127.139 (Gandi)
+H=fxhash-preservation.rethread.art
+scp deploy/$H rootmab:/tmp/
+ssh rootmab "sudo install -m644 /tmp/$H /etc/nginx/sites-available/ &&
+  sudo ln -sf ../sites-available/$H /etc/nginx/sites-enabled/ &&
+  sudo nginx -t && sudo systemctl reload nginx && sleep 5 &&
+  sudo certbot --nginx --redirect --cert-name $H -d $H"
+# (sleep: right after a reload, old nginx workers still answer for a few seconds, and
+#  the first certbot attempt failed with a 404 on the challenge)
 ```
 
 ### Artist and date
