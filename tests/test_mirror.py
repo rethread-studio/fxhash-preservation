@@ -121,6 +121,56 @@ def test_broken_repo_reports_error(tmp_path: Path, ident: Identity) -> None:
     assert not (tmp_path / "p.git").exists() and not (tmp_path / "p.git.tmp").exists()
 
 
+def test_head_only_clean(tmp_path: Path, ident: Identity) -> None:
+    src = make_repo(tmp_path / "p")
+    master = git("-C", str(src), "rev-parse", "master")
+    feature = git("-C", str(src), "rev-parse", "feature")
+    git("-C", str(src), "update-ref", "refs/remotes/origin/master", feature)
+    r = convert_one(src, tmp_path / "p.git", ident, head_only=True)
+    assert r.status == "mirrored", r.error
+    assert "refs_dropped" in r.issues and "dirty_worktree" not in r.issues
+    repo = tmp_path / "p.git"
+    assert refs(repo) == {"refs/heads/master": master}  # tags, branches, remotes gone
+    assert git("symbolic-ref", "HEAD", git_dir=repo) == "refs/heads/master"
+    assert r.commit == master
+    # objects only reachable from dropped refs are not published
+    with pytest.raises(GitError):
+        git("cat-file", "-e", feature, git_dir=repo)
+    assert git("rev-list", "--count", "master", git_dir=repo) == "2"
+
+
+def test_head_only_dirty_commits_on_branch(tmp_path: Path, ident: Identity) -> None:
+    src = make_repo(tmp_path / "p")
+    master = git("-C", str(src), "rev-parse", "master")
+    (src / "a.txt").write_text("v3 uncommitted\n")
+    (src / "new.txt").write_text("untracked\n")
+    (src / "x.o").write_text("ignored by the repo's .gitignore\n")
+    r = convert_one(src, tmp_path / "p.git", ident, head_only=True)
+    assert r.status == "mirrored", r.error
+    assert "dirty_worktree" in r.issues
+    repo = tmp_path / "p.git"
+    assert list(refs(repo)) == ["refs/heads/master"]
+    tip = refs(repo)["refs/heads/master"]
+    assert r.commit == tip and git("rev-parse", "master^", git_dir=repo) == master
+    assert git("log", "-1", "--format=%an|%s", "master", git_dir=repo) == (
+        "Test Archive|Uncommitted working tree of p")
+    assert git("show", "master:a.txt", git_dir=repo) == "v3 uncommitted"
+    names = git("ls-tree", "--name-only", "master", git_dir=repo).split("\n")
+    assert "new.txt" in names and "x.o" not in names
+    # rerun is stable: same tip, nothing changed
+    again = convert_one(src, repo, ident, head_only=True, rebuild=True)
+    assert again.status == "unchanged" and again.commit == tip
+
+
+def test_head_only_detached(tmp_path: Path, ident: Identity) -> None:
+    src = make_repo(tmp_path / "p")
+    first = git("-C", str(src), "rev-parse", "v1")
+    git("-C", str(src), "checkout", "-q", "--detach", "v1")
+    r = convert_one(src, tmp_path / "p.git", ident, head_only=True)
+    assert r.status == "mirrored", r.error
+    assert refs(tmp_path / "p.git") == {"refs/heads/main": first}
+
+
 def test_empty_dirs_turned_files_in_gitdir(tmp_path: Path, ident: Identity) -> None:
     # seen on the fxhash drive: a copy turned empty .git subdirs into 0-byte files
     src = make_repo(tmp_path / "p")

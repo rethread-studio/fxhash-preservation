@@ -61,6 +61,9 @@ All commands accept `--json` and exit non-zero when something needs attention.
   untracked files, minus that repo's own `.gitignore`), a commit on top of HEAD goes to
   branch `swh-worktree-snapshot`. A repo with broken objects fails with `error`; it is
   never silently flattened.
+- `--head-only` publishes such a repo with a single branch: the one HEAD points to (`main`
+  if detached), with the uncommitted work committed on top of it. Other branches,
+  remote-tracking refs, tags and stashes are dropped, with their objects (`refs_dropped`).
 - The report (one JSON line per folder) has a status (`created`, `mirrored`, `exists`,
   `updated`, `unchanged`, `empty`, `error`, `planned`) and these issues:
   - `source_is_git_repo`: history mirrored (see above). `dirty_worktree`: snapshot branch
@@ -107,7 +110,8 @@ DEST=/media/martin/63d87370-5401-42f9-a718-bead975d75d4/fxhash-git
 FLAT=(--flatten-nested 'fxhash-1.0-tezos/2023/Aweille!__28348/library'
       --flatten-nested 'fxhash-1.0-tezos/2023/Gridscape Symphony__29177/p5.gif.js')
 # the drive is ext4, but all 663k source files are mode 777 (copy artefact): ignore modes
-OPTS=(--depth 3 --ignore-filemode "${FLAT[@]}")
+# the 42 source git repos: one branch each, uncommitted work committed on it (user's call)
+OPTS=(--depth 3 --ignore-filemode --head-only "${FLAT[@]}")
 
 # 0. scan: nested git repos, names, empty folders, all-executable folders (writes nothing)
 swhprep convert "$SRC" "$DEST" "${OPTS[@]}" --dry-run --report scan.jsonl \

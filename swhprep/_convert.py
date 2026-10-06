@@ -217,10 +217,12 @@ def convert_one(
     dry_run: bool = False,
     scan: tuple[int, list[str], list[str]] | None = None,
     flatten: frozenset[str] = frozenset(),
+    head_only: bool = False,
 ) -> Result:
     """Create or refresh bare `repo` from `source`.
 
-    A source that is itself a git repo with commits keeps its history (all refs mirrored);
+    A source that is itself a git repo with commits keeps its history (all refs mirrored;
+    with `head_only`, only the branch HEAD points to, uncommitted work committed on top);
     anything else becomes a single synthetic commit. A source holding a nested git repo is
     refused (git would store it as a bare gitlink and lose its content), unless that repo is
     listed in `flatten` (paths relative to `source`): its files are then stored as plain
@@ -252,7 +254,8 @@ def convert_one(
             res.commit = git("rev-parse", "-q", "--verify", "HEAD", git_dir=repo, check=False)
             return res
         if has_history:
-            _mirror(source, repo, ident, res, ignore_filemode=ignore_filemode, flatten=flat)
+            _mirror(source, repo, ident, res, ignore_filemode=ignore_filemode, flatten=flat,
+                    head_only=head_only)
             return res
         work = repo if exists else repo.with_name(repo.name + ".tmp")
         if not exists:
@@ -293,9 +296,13 @@ def _has_commits(source: Path) -> bool:
 
 def _mirror(
     source: Path, repo: Path, ident: Identity, res: Result, *, ignore_filemode: bool,
-    flatten: list[str] | None = None,
+    flatten: list[str] | None = None, head_only: bool = False,
 ) -> None:
-    """Mirror every ref of the source repo; uncommitted work goes on a snapshot branch."""
+    """Mirror every ref of the source repo; uncommitted work goes on a snapshot branch.
+
+    With `head_only`, keep only the branch HEAD points to (`main` if HEAD is detached), and
+    commit uncommitted work on top of it; every other ref and its objects are dropped.
+    """
     work = repo.with_name(repo.name + ".tmp")
     shutil.rmtree(work, ignore_errors=True)
     work.parent.mkdir(parents=True, exist_ok=True)
@@ -320,6 +327,18 @@ def _mirror(
         git("symbolic-ref", "HEAD", branch, git_dir=work)
         head = git("rev-parse", "HEAD^{commit}", git_dir=work)
         res.issues.append("head_repointed")
+    if head_only:
+        branch = git("symbolic-ref", "-q", "HEAD", git_dir=work, check=False)
+        if not branch:  # detached HEAD
+            branch = f"refs/heads/{BRANCH}"
+            git("update-ref", branch, head, git_dir=work)
+            git("symbolic-ref", "HEAD", branch, git_dir=work)
+        others = [r for r in git("for-each-ref", "--format=%(refname)", git_dir=work).split("\n")
+                  if r and r != branch]
+        if others:
+            git("update-ref", "--stdin", git_dir=work,
+                input="".join(f"delete {r}\n" for r in others).encode())
+            res.issues.append("refs_dropped")
     # Snapshot respects the repo's own .gitignore (no -f): ignored files are build output
     # the authors chose not to version.
     tree = _snapshot_tree(source, work, ignore_filemode=ignore_filemode, force=False,
@@ -327,7 +346,11 @@ def _mirror(
     if tree != git("rev-parse", f"{head}^{{tree}}", git_dir=work):
         msg = f"Uncommitted working tree of {source.name}\n".encode()
         snap = git("commit-tree", tree, "-p", head, git_dir=work, env=ident.env(), input=msg)
-        git("update-ref", f"refs/heads/{SNAPSHOT_BRANCH}", snap, git_dir=work)
+        if head_only:
+            git("update-ref", "HEAD", snap, head, git_dir=work)
+            head = snap
+        else:
+            git("update-ref", f"refs/heads/{SNAPSHOT_BRANCH}", snap, git_dir=work)
         res.issues.append("dirty_worktree")
     git("repack", "-adq", git_dir=work)
     git("update-server-info", git_dir=work)
@@ -478,6 +501,7 @@ def convert_all(
     dry_run: bool = False,
     on_result: Callable[[Result], None] | None = None,
     flatten_nested: Iterable[str] = (),
+    head_only: bool = False,
 ) -> list[Result]:
     """Convert every source folder found at `depth` under `src` into `dest/<name>.git`.
 
@@ -510,7 +534,8 @@ def convert_all(
              ) -> Result:
         (s, name), scan, flat = item
         return convert_one(s, dest / name, ident, ignore_filemode=ignore_filemode,
-                           rebuild=rebuild, dry_run=dry_run, scan=scan, flatten=flat)
+                           rebuild=rebuild, dry_run=dry_run, scan=scan, flatten=flat,
+                           head_only=head_only)
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         for r in pool.map(work, zip(pairs, scans, flats, strict=True)):
