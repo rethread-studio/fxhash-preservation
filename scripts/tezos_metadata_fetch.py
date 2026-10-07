@@ -12,7 +12,9 @@ OUTDIR/uris/<contract>.jsonl.gz.
 if the bytes hash back to that CID (a single-block UnixFS file, as these < 256 KiB
 documents are), so a gateway can't substitute content. Output, per 10,000 tokens:
 OUTDIR/metadata/<contract>/<chunk>.jsonl.gz, one line per token: {"token_id", "uri",
-"text"} (exact UTF-8 bytes; {"b64"} if not UTF-8) or {"token_id", "uri", "error"}. A chunk
+"via", "text"} (exact UTF-8 bytes; {"b64"} if not UTF-8; `via`: the gateway host that
+served it) or {"token_id", "uri", "error"}. Tokens are split across gateways (SPLIT), each
+falling back to the others. A chunk
 is written once all its tokens were tried; failed tokens are retried on the next run.
 """
 
@@ -107,17 +109,29 @@ def cmd_list(out: str) -> None:
         os.replace(path + ".tmp", path)
 
 
+# Share of tokens whose first try goes to each gateway (the other ones are fallbacks):
+# 60% to our node, 40% to the public gateway, which rate-limits above ~20 req/s.
+SPLIT = [float(x) for x in os.environ.get("FXHASH_SPLIT", "0.6,0.4").split(",")]
+
+
 class Gateways:
-    """Gateways in priority order; one that is overloaded or down is benched for a while."""
+    """Split tokens across gateways; one that is overloaded or down is benched for a while."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.bench: dict[str, float] = {}
 
-    def order(self) -> list[str]:
+    def order(self, token_id: int) -> list[str]:
+        x = (token_id * 2654435761 % 2**32) / 2**32  # stable pseudo-random in [0, 1)
+        k, acc = 0, 0.0
+        for k, share in enumerate(SPLIT[:len(GATEWAYS)]):
+            acc += share
+            if x < acc:
+                break
+        pref = GATEWAYS[k:] + GATEWAYS[:k]
         with self.lock:
             now = time.time()
-            return [g for g in GATEWAYS if self.bench.get(g, 0) < now] or GATEWAYS
+            return [g for g in pref if self.bench.get(g, 0) < now] or pref
 
     def penalize(self, g: str, seconds: float) -> None:
         with self.lock:
@@ -133,7 +147,7 @@ def fetch_one(gw: Gateways, row: dict[str, Any]) -> dict[str, Any]:
     cid = uri.removeprefix("ipfs://").split("/")[0]
     errors = []
     for attempt in range(3):
-        for g in gw.order():
+        for g in gw.order(row["token_id"]):
             try:
                 data = get(g + cid, timeout=60)
             except urllib.error.HTTPError as e:
@@ -149,6 +163,7 @@ def fetch_one(gw: Gateways, row: dict[str, Any]) -> dict[str, Any]:
             if cid.startswith("Qm") and len(data) <= 262144 and cid_v0(data) != cid:
                 errors.append(f"{g.split('/')[2]} cid mismatch")
                 continue
+            out["via"] = g.split("/")[2]
             try:
                 out["text"] = data.decode("utf-8")
             except UnicodeDecodeError:
