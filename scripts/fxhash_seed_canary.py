@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Canary: can we capture the seed of every minted fxhash iteration, and is it right?
 
 50 random minted tokens (40 Tezos, 10 EVM) from projects in the fxhash archive. For each,
