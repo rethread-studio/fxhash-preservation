@@ -135,6 +135,16 @@ def list_evm(rpcs: dict[str, str]) -> list[dict[str, Any]]:
                         if len(base) == 32 else base.decode("utf-8", "replace")
                     row["onchain_pointer"] = pointer
                 out.append(row)
+        # onchainPointer: an SSTORE2 contract (STOP byte + data) holding the 32-byte
+        # ONCHFS hash of the project's code (equals the API's onchfs:// generative URI)
+        for row in out:
+            p = row.get("onchain_pointer")
+            if row["chain"] == chain.lower() and p and int(p, 16):
+                body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_getCode",
+                                   "params": [p, "latest"]}).encode()
+                code = bytes.fromhex(json.loads(get(url, body))["result"][2:])
+                row["onchain_pointer_data"] = code[1:].hex()
+                time.sleep(0.2)
         print(f"{chain}: {len(contracts)} contracts", flush=True)
     return out
 

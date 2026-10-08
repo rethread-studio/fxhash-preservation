@@ -61,6 +61,9 @@ def main() -> None:
             if c.get("codex"):
                 row["code_onchain"] = c["codex"][0]
                 row["code_how"] = "storage (codex)"
+            elif len(c.get("onchain_pointer_data") or "") == 64:
+                row["code_onchain"] = "onchfs://" + c["onchain_pointer_data"]
+                row["code_how"] = "storage (EVM onchainPointer)"
             elif meta.get("generativeUri") or meta.get("generatorUri"):
                 row["code_onchain"] = meta.get("generativeUri") or meta.get("generatorUri")
                 row["code_how"] = "metadata document anchored in storage"
@@ -70,24 +73,32 @@ def main() -> None:
                 row["code_how"] = "metadata not readable: " + d.get("error", "no document")
             else:
                 row["code_how"] = "not anchored (https metadata)"
+            # Tezos v3 also has the link in its metadata document; some codex entries hold
+            # "ipfs://<64 hex>", which is no CID, while the document has the right one
+            doc_code = meta.get("generativeUri") or meta.get("generatorUri")
+            if doc_code and doc_code != row.get("code_onchain"):
+                row["code_onchain_doc"] = doc_code
             row["code_api"] = api.get(key)
             if g:
                 row["repo"] = g["repo"]
                 row["code_archive"] = g.get("want")
                 row["git_cids"] = sorted(set(g.get("cids", {}).values()))
+            ons = {cid(row.get("code_onchain")), cid(row.get("code_onchain_doc"))} - {None}
+            if re.fullmatch(r"ipfs://[0-9a-f]{64}", row.get("code_onchain") or ""):
+                stats["tezos codex entry malformed (ipfs://<hex>)"] += 1
             on = cid(row.get("code_onchain"))
             scheme = (row.get("code_onchain") or row.get("code_api") or "").split("://")[0]
             row["verdict"] = (
                 "no repo" if not g else
                 "chain: not anchored" if not on else
-                "git reproduces chain" if on in row["git_cids"] else
+                "git reproduces chain" if ons & set(row["git_cids"]) else
                 "git differs from chain")
             stats[f"{key[0] if key[0] == 'tezos' else 'evm'} {scheme or '?'}: "
                   f"{row['verdict']}"] += 1
             if g and on and g.get("want"):
-                stats["archive == chain" if g["want"] == on else "archive != chain"] += 1
+                stats["archive == chain" if g["want"] in ons else "archive != chain"] += 1
             if on and row["code_api"]:
-                stats["api == chain" if cid(row["code_api"]) == on else "api != chain"] += 1
+                stats["api == chain" if cid(row["code_api"]) in ons else "api != chain"] += 1
             out.write(json.dumps(row) + "\n")
     for k, v in sorted(stats.items()):
         print(v, k)
