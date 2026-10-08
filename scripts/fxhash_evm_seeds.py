@@ -11,6 +11,8 @@ chain). Several comma-separated RPC URLs for a chain share the batches, one requ
 flight per URL (public endpoints rate-limit). Writes OUTDIR/evm-<chain>.jsonl.gz, one line
 per token: {"chain", "contract", "token_id", "seed", "params", "minter", "block"}, and
 OUTDIR/evm-<chain>-contracts.json (totalSupply per contract, contracts that revert).
+Contracts without totalSupply (MediaFactory's CollectiveMedia, 2026) are read too: their
+tokens are the ids below nextTokenId() that have an owner, and tokenInfo gives the seed.
 Reads are made at `latest` (public nodes keep only minutes of state; a minted token's seed
 never changes); `block` is the head when the run started.
 """
@@ -35,6 +37,10 @@ GEN_ART_INFO = bytes.fromhex("a5a2d097")  # genArtInfo(uint256) -> (minter, seed
 # Later full (non-clone) fxhash contracts on Base revert on genArtInfo; their
 # tokenInfo(uint256) returns 4 words, the 3rd being the seed (checked against the fxhash API)
 TOKEN_INFO = bytes.fromhex("cc33c875")
+# MediaFactory contracts (CollectiveMedia, 2026) have no totalSupply: their tokens are the
+# ids below nextTokenId() that have an owner, and tokenInfo returns (version, seed)
+NEXT_TOKEN_ID = bytes.fromhex("75794a3c")
+OWNER_OF = bytes.fromhex("6352211e")  # ownerOf(uint256)
 # 250 genArtInfo results are ~64 KB; erigon's default --rpc.returndata.limit is 100 KB
 BATCH = 250
 
@@ -82,12 +88,22 @@ def run_chain(chain: str, urls: list[str], contracts: list[str], outdir: str) ->
             supplies[c] = decode(["uint256"], r)[0] if r else 0
             if r is None:
                 reverted.append(c)
+    owned: dict[str, list[int]] = {}  # token ids of contracts without totalSupply
+    for c in reverted:
+        (nxt,) = multicall(url, "latest", [(c, NEXT_TOKEN_ID)])
+        if nxt:
+            ids = list(range(decode(["uint256"], nxt)[0] + 1))
+            owners = multicall(url, "latest",
+                               [(c, OWNER_OF + encode(["uint256"], [i])) for i in ids])
+            owned[c] = [i for i, o in zip(ids, owners, strict=True) if o]
     with open(f"{outdir}/evm-{chain.lower()}-contracts.json", "w") as sf:
         # host only: provider URLs often embed an API key in the path
         hosts = [urllib.parse.urlsplit(u).netloc for u in urls]
         json.dump({"chain": chain, "rpc_hosts": hosts, "block": int(block, 16),
-                   "total_supply": supplies, "total_supply_reverted": reverted}, sf, indent=1)
+                   "total_supply": supplies, "total_supply_reverted": reverted,
+                   "owned_token_ids": {c: len(v) for c, v in owned.items()}}, sf, indent=1)
     todo = [(c, i) for c in contracts for i in range(1, supplies[c] + 1)]
+    todo += [(c, i) for c, ids in owned.items() for i in ids]
     print(f"{chain}: {len(todo)} tokens", file=sys.stderr)
 
     def read(job: tuple[int, list[tuple[str, int]]]) -> list[dict[str, Any]]:
@@ -111,6 +127,8 @@ def run_chain(chain: str, urls: list[str], contracts: list[str], outdir: str) ->
             for row, r in zip(retry, multicall(url, "latest", calls), strict=True):
                 if r and len(r) >= 96:
                     row.update(seed="0x" + r[64:96].hex(), getter="tokenInfo")
+                elif r and len(r) == 64:  # CollectiveMedia: (version, seed)
+                    row.update(seed="0x" + r[32:64].hex(), getter="tokenInfo(version,seed)")
         return rows
 
     path = f"{outdir}/evm-{chain.lower()}.jsonl.gz"

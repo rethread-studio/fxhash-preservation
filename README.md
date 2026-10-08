@@ -218,9 +218,10 @@ count. On 2026-10-08:
   (no registry: enumerated from its CREATE nonces). 797 projects, 851,207 tokens.
 - Every API project is in a registry. 176 projects are only on chain (22 Ethereum, 154
   Base), and none of them has a minted token.
-- The 122 tokens of the 3 MediaFactory projects have no seed in `fxhash_evm_seeds.py`
-  output: those contracts have no `totalSupply()`, so the seeds script skipped them
-  (`total_supply_reverted`); their count here comes from `nextTokenId()` and `ownerOf`.
+- The 3 MediaFactory projects have no `totalSupply()`; their 122 tokens are the ids below
+  `nextTokenId()` that have an owner, and `fxhash_evm_seeds.py` reads their seeds with
+  `tokenInfo(id)` = (version, seed) (getter `tokenInfo(version,seed)`). Ethereum seeds:
+  8,510, of which the 8,388 of the earlier run are unchanged.
 
 ## Validation
 
