@@ -14,10 +14,11 @@
   `metadataInfo()` = (baseURI, onchainPointer); a 32-byte baseURI is the sha256 digest of a
   CIDv0 folder of token metadata, <cid>/<token id>/metadata.json.
 
-`fetch` reads the metadata document each project points to (Tezos: the project metadata;
+`fetch [ONCHFS_DIR]` reads the metadata document each project points to (Tezos: the project metadata;
 EVM: token 1's metadata) through GATEWAY (comma-separated: the first must be our own kubo node, which checks
 every block against its CID, so a path below a CID is as trustworthy as the CID; the
-others serve only bare one-block CIDs, hashed here), and writes
+others serve only bare one-block CIDs, hashed here; onchfs:// documents are taken from
+ONCHFS_DIR, written by onchfs.py extract, which checked them), and writes
 {"chain", "id", "uri", "text"} or {..., "error"} per project.
 """
 
@@ -192,13 +193,17 @@ def _varint(n: int) -> bytes:
             return out
 
 
-def fetch(rows_path: str, out_path: str, gateway: str) -> None:
+def fetch(rows_path: str, out_path: str, gateway: str, onchfs_dir: str | None = None) -> None:
     gateways = gateway.split(",")
     with (gzip.open(rows_path, "rt") if rows_path.endswith(".gz") else open(rows_path)) as f:
         rows = [json.loads(line) for line in f]
     todo = []
     for r in rows:
-        if r["chain"] == "tezos" and r["issuer"] != "v1" and r["metadata_uri"]:
+        if r["chain"] == "tezos" and r["issuer"] != "v1" and r["metadata_uri"].startswith(
+                "onchfs://"):
+            if onchfs_dir:
+                todo.append((r, r["metadata_uri"]))
+        elif r["chain"] == "tezos" and r["issuer"] != "v1" and r["metadata_uri"]:
             todo.append((r, r["metadata_uri"]))
         elif r["chain"] != "tezos" and r.get("base_uri", "").startswith("ipfs://"):
             todo.append((r, r["base_uri"].rstrip("/") + "/1/metadata.json"))
@@ -209,9 +214,8 @@ def fetch(rows_path: str, out_path: str, gateway: str) -> None:
         with gzip.open(out_path, "rt") as f:
             done = {(d["chain"], d["id"]): d for d in map(json.loads, f) if "error" not in d}
 
-    def one(item: tuple[dict[str, Any], str]) -> dict[str, Any]:
-        r, u = item
-        d: dict[str, Any] = {"chain": r["chain"], "id": r["id"], "uri": u}
+    def fetch_uri(u: str) -> tuple[bytes | None, dict[str, Any]]:
+        d: dict[str, Any] = {"uri": u}
         path = u.removeprefix("ipfs://")
         # the first gateway is our own kubo node (it verifies every block); the others are
         # used only for a bare CIDv0 of one block, whose bytes we hash ourselves
@@ -227,8 +231,25 @@ def fetch(rows_path: str, out_path: str, gateway: str) -> None:
                 continue
             d.pop("error", None)
             d["via"] = g.split("/")[2]
-            break
-        if "error" in d:
+            return data, d
+        return None, d
+
+    def one(item: tuple[dict[str, Any], str]) -> dict[str, Any]:
+        r, u = item
+        if u.startswith("onchfs://"):  # read from chain and verified by onchfs.py extract
+            f = os.path.join(onchfs_dir or "", r["chain"], u[9:])
+            if not os.path.isfile(f):
+                return {"chain": r["chain"], "id": r["id"], "uri": u, "error": "not extracted"}
+            with open(f, "rb") as fh:
+                data: bytes | None = fh.read()
+            d: dict[str, Any] = {"uri": u, "via": "onchfs"}
+        else:
+            data, d = fetch_uri(u)
+        if data is None and r.get("version_uri") == u:
+            # some versions name a folder of token metadata, like a base URI
+            data, d = fetch_uri(u.rstrip("/") + "/1/metadata.json")
+        d = {"chain": r["chain"], "id": r["id"], **d}
+        if data is None:
             return d
         try:
             d["text"] = data.decode("utf-8")
@@ -256,8 +277,8 @@ def main() -> None:
         out = sys.argv[2]
         with (gzip.open(out, "wt") if out.endswith(".gz") else open(out, "w")) as f:
             f.writelines(json.dumps(r) + "\n" for r in rows)
-    elif len(sys.argv) == 5 and sys.argv[1] == "fetch":
-        fetch(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif len(sys.argv) in (5, 6) and sys.argv[1] == "fetch":
+        fetch(*sys.argv[2:])
     else:
         raise SystemExit(__doc__)
 

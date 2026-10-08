@@ -52,21 +52,31 @@ def main() -> None:
             key = (t["chain"].lower(), t["id"].lower())
             api = api_uri.get(key, "")
             c = chain.get(key, {})
-            root, how = None, None
+            # candidate roots from the chain, in order; the first one extracted is used
+            # (Tezos 29231: its codex root is not in ONCHFS, its anchored document's is)
+            cands: list[tuple[str, str]] = []
             if c.get("codex") and c["codex"][0].startswith("onchfs://"):
-                root, how = c["codex"][0][9:], "tezos codex"
-            elif len(c.get("onchain_pointer_data") or "") == 64:
-                root, how = c["onchain_pointer_data"], "evm onchainPointer"
-            elif key in docs and c.get("version_uri"):
-                g = json.loads(docs[key]["text"]).get("generativeUri") or ""
-                if g.startswith("onchfs://"):
-                    root, how = g[9:].split("/")[0], "evm versionInfo document"
+                cands.append((c["codex"][0][9:], "tezos codex"))
+            if len(c.get("onchain_pointer_data") or "") == 64:
+                cands.append((c["onchain_pointer_data"], "evm onchainPointer"))
+            if key in docs:
+                m = json.loads(docs[key]["text"])
+                # a project document has generativeUri, a token's (folder versions) generatorUri
+                g = m.get("generativeUri") or m.get("generatorUri") or ""
+                if g.startswith("onchfs://") and c:
+                    how = "evm versionInfo document" if c.get("version_uri") else \
+                        "metadata document anchored in storage"
+                    cands.append((g[9:].split("/")[0], how))
+            store = "tezos" if key[0] == "tezos" else key[0]
+            root, how = next(((r, h) for r, h in cands if (store, r) in ok),
+                             cands[0] if cands else (None, None))
             if not root and not api.startswith("onchfs://"):
                 continue  # an IPFS project
             row: dict[str, Any] = {"chain": key[0], "id": t["id"], "name": t["name"],
                                    "root_chain": root, "how": how,
                                    "root_api": api[9:].split("/")[0] or None}
-            store = "tezos" if key[0] == "tezos" else key[0]
+            if len({r for r, _ in cands}) > 1:
+                row["roots_on_chain"] = [r for r, _ in cands]
             if not root:
                 row["outcome"] = "no root on chain"
             elif (store, root) not in ok:
