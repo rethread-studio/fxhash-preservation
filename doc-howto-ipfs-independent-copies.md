@@ -74,8 +74,15 @@ The delegated routing HTTP API (`/routing/v1`) answers from both at once;
 - **Organisation attribution is heuristic.** It rests on IP ranges, DNS names and
   `whois`. Hosting providers (OVH, Hetzner) say where a node runs, not who runs it.
 - **Independence also covers money and policy.** Five peers paid by the same account
-  disappear together. Same peer set on unrelated CIDs is the signature of one
-  pinning arrangement (see `note-ipfs-systematic-pinning-fxhash.md`).
+  disappear together. Providers of unrelated CIDs all drawn from one small pool is the
+  signature of one pinning arrangement (see `note-ipfs-systematic-pinning-fxhash.md`).
+
+## Tooling
+
+`scripts/ipfs_provider_census.py SAMPLE.jsonl OUT.json` runs steps 1 to 3 on a sample
+(`{"kind", "cid", "ref"}` per line) and prints, per kind, the distribution of peers per
+CID, the peers ranked by coverage with their operator, and the number of distinct provider
+sets. 100 CIDs take about 1.5 min.
 
 ## References
 
