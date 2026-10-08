@@ -77,10 +77,11 @@ def check(repo: str) -> dict[str, Any]:
     row: dict[str, Any] = {"repo": rel}
     git = ["git", f"--git-dir={repo}"]
     src = subprocess.run([*git, "show", "main:_source.txt"], capture_output=True, text=True,
-                         env=ENV)
+                         env=ENV, check=False)
     m = re.search(r"generative_uri: ipfs://([A-Za-z0-9]+)", src.stdout)
     row["want"] = m.group(1) if m else None
-    tid = re.search(r"^id: (\S+)", src.stdout, re.M)
+    # a few repos have no _source.txt: the folder name ends with __<id>
+    tid = re.search(r"^id: (\S+)", src.stdout, re.MULTILINE) or re.search(r"__([^/_]+)$", rel)
     if tid:  # EVM folders don't name the chain: look their address up alone
         key = ("tezos:" if rel.startswith("fxhash-1.0-tezos") else "") + tid.group(1).lower()
         row["api"] = (_api.get(key) or "").removeprefix("ipfs://") or None
