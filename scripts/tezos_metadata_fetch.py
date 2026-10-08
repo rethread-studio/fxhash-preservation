@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import gzip
 import hashlib
+import http.client
 import json
 import os
 import sys
@@ -156,7 +157,9 @@ def fetch_one(gw: Gateways, row: dict[str, Any]) -> dict[str, Any]:
                 if e.code in (403, 429) or (e.code >= 500 and e.code != 504):
                     gw.penalize(g, 60)
                 continue
-            except (OSError, ValueError) as e:
+            # HTTPException: e.g. IncompleteRead, a response cut short (killed the whole
+            # run once, 2026-10-07 ~20:15, when it was not caught here)
+            except (OSError, ValueError, http.client.HTTPException) as e:
                 errors.append(f"{g.split('/')[2]} {type(e).__name__}")
                 gw.penalize(g, 30)
                 continue
