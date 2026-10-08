@@ -198,9 +198,17 @@ also does.
 Cross-checks: every Tezos `created_at` equals fxhashArchive's capture of the v1 API
 (27,051/27,051), and with the override every solo Tezos name it has matches.
 
-### EVM projects on chain
+### Projects on chain
 
-The chain, not the API, says which projects exist. `scripts/fxhash_evm_registry.py` reads
+The chain, not the API, says which projects exist.
+
+`scripts/fxhash_tezos_registry.py` reads the three issuer registries and the three GENTK
+contracts through TzKT and writes `data/fxhash-tezos-registry.json.gz`. Issuer v2 holds
+copies of v1's projects under the same ids, so each project is counted in the latest
+registry where it appears. On 2026-10-08: v1 0, v2 22,649, v3 4,783, so 27,432 projects;
+9,660 v1 ids are active in v2, and the 20 others were burned in v2 by their authors.
+Tokens: 589,146 + 1,030,141 + 226,346 = 1,845,633.
+ `scripts/fxhash_evm_registry.py` reads
 every fxhash EVM project factory (all deployed by 0x0E7De56c...) and writes
 `data/fxhash-evm-registry.jsonl.gz`, one line per project contract with its minted token
 count. On 2026-10-08:
