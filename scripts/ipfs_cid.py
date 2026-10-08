@@ -5,7 +5,9 @@
 
 Builds the DAG with kubo in a throwaway repo (`ipfs add -r -H`, CIDv0 defaults), then
 rewrites each non-root directory node to carry UnixFS field 7 (mode) = 0o644, as some
-fxhash uploads did, and recomputes hashes and Tsizes bottom-up. Prints both root CIDs.
+fxhash uploads did, and recomputes hashes and Tsizes bottom-up. Prints three root CIDs:
+plain, mode on every subdirectory, and mode on every subdirectory except `__MACOSX` and
+below (2021 uploads: the zip's implicit `__MACOSX` folders got no mode).
 """
 
 from __future__ import annotations
@@ -102,8 +104,9 @@ def main() -> None:
                     unixfs = {k: x for k, x in fields(v) if isinstance(x, int)}
             return links, unixfs
 
-        def rebuild(c: str, is_root: bool) -> tuple[bytes, int]:
-            """(multihash, cumulative size) of the rewritten node."""
+        def rebuild(c: str, is_root: bool, skip: str | None = None,
+                    skipped: bool = False) -> tuple[bytes, int]:
+            """(multihash, cumulative size) of the rewritten node; no mode on `skip`."""
             b = block(c)
             links, unixfs = node(b)
             if unixfs.get(1) != 1:  # not a directory: unchanged
@@ -112,10 +115,10 @@ def main() -> None:
             for h, name, tsize in links:
                 child = b58(h)
                 if node(block(child))[1].get(1) == 1:
-                    h, tsize = rebuild(child, False)
+                    h, tsize = rebuild(child, False, skip, skipped or name == skip)
                 new_links.append((h, name, tsize))
             data = varint(1 << 3) + varint(1)  # Type = Directory
-            if not is_root:
+            if not is_root and not skipped:
                 data += varint(7 << 3) + varint(0o644)
             body = b"".join(ld(2, ld(1, h) + ld(2, n.encode()) + varint(3 << 3) + varint(t))
                             for h, n, t in new_links) + ld(1, data)
@@ -125,6 +128,7 @@ def main() -> None:
         mh, _ = rebuild(root, True)
         print("plain", root)
         print("mode ", b58(mh))
+        print("mode-macosx", b58(rebuild(root, True, "__MACOSX")[0]))
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
