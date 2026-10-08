@@ -10,7 +10,8 @@ from `fetch_api_generative_uris`). The tree of `main` minus `_source.txt` is has
 with `ipfs add -n`: first `-H` (kubo defaults, hidden files), then without `-H`, then
 with UnixFS mode 0644 on subdirectories, all of them or all but `__MACOSX`
 (scripts/ipfs_cid.py). One line per repo in OUT.jsonl; already present repos are skipped,
-so the run resumes.
+so the run resumes; --redo-unmatched first drops the rows that matched nothing. ONCHFS
+repos (onchfs:// generative_uri) are only marked: onchfs_repos.py checks them.
 """
 
 from __future__ import annotations
@@ -80,6 +81,9 @@ def check(repo: str) -> dict[str, Any]:
                          env=ENV, check=False)
     m = re.search(r"generative_uri: ipfs://([A-Za-z0-9]+)", src.stdout)
     row["want"] = m.group(1) if m else None
+    if "generative_uri: onchfs://" in src.stdout:  # checked by onchfs_repos.py
+        row["onchfs"] = True
+        return row
     # a few repos have no _source.txt: the folder name ends with __<id>
     tid = re.search(r"^id: (\S+)", src.stdout, re.MULTILINE) or re.search(r"__([^/_]+)$", rel)
     if tid:  # EVM folders don't name the chain: look their address up alone
@@ -116,6 +120,9 @@ def check(repo: str) -> dict[str, Any]:
 
 def main() -> None:
     args = sys.argv[1:]
+    redo = "--redo-unmatched" in args
+    if redo:
+        args.remove("--redo-unmatched")
     workers = 6
     if "--workers" in args:
         i = args.index("--workers")
@@ -132,7 +139,16 @@ def main() -> None:
     done: set[str] = set()
     if os.path.exists(out_path):
         with open(out_path) as f:
-            done = {json.loads(line)["repo"] for line in f}
+            rows = [json.loads(line) for line in f]
+        if redo:  # drop rows that matched nothing (e.g. checked before a variant existed)
+            kept = [r for r in rows if r.get("match_source") or r.get("match_api")
+                    or r.get("onchfs")]
+            print(f"redo: {len(rows) - len(kept)} unmatched rows dropped", flush=True)
+            with open(out_path + ".tmp", "w") as f:
+                f.writelines(json.dumps(r) + "\n" for r in kept)
+            os.replace(out_path + ".tmp", out_path)
+            rows = kept
+        done = {r["repo"] for r in rows}
     todo = [r for r in repos if r.split("/fxhash-git/", 1)[1].removesuffix(".git") not in done]
     print(f"{len(repos)} repos, {len(todo)} to check", flush=True)
     with open(out_path, "a") as out, ProcessPoolExecutor(workers, initializer=init,
@@ -145,6 +161,9 @@ def main() -> None:
     stats: collections.Counter[str] = collections.Counter()
     with open(out_path) as f:
         for row in map(json.loads, f):
+            if row.get("onchfs"):
+                stats["onchfs repo (see onchfs_repos.py)"] += 1
+                continue
             stats["source: " + ("+".join(row.get("match_source", [])) or
                                 ("error" if "error" in row else "NONE"))] += 1
             stats["api: " + ("+".join(row.get("match_api", [])) or
