@@ -15,8 +15,9 @@
   CIDv0 folder of token metadata, <cid>/<token id>/metadata.json.
 
 `fetch` reads the metadata document each project points to (Tezos: the project metadata;
-EVM: token 1's metadata) through GATEWAY, which must be our own kubo node (it checks every
-block against its CID, so a path below a CID is as trustworthy as the CID), and writes
+EVM: token 1's metadata) through GATEWAY (comma-separated: the first must be our own kubo node, which checks
+every block against its CID, so a path below a CID is as trustworthy as the CID; the
+others serve only bare one-block CIDs, hashed here), and writes
 {"chain", "id", "uri", "text"} or {..., "error"} per project.
 """
 
@@ -109,6 +110,15 @@ def list_tezos() -> list[dict[str, Any]]:
     return out
 
 
+def eth_call(url: str, to: str, data: str) -> bytes:
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": [
+        {"to": to, "data": data}, "latest"]}).encode()
+    res = json.loads(get(url, body))
+    if "error" in res:
+        raise RuntimeError(res["error"])
+    return bytes.fromhex(res["result"][2:])
+
+
 def list_evm(rpcs: dict[str, str]) -> list[dict[str, Any]]:
     from eth_abi import decode, encode
     out = []
@@ -145,6 +155,24 @@ def list_evm(rpcs: dict[str, str]) -> list[dict[str, Any]]:
                 code = bytes.fromhex(json.loads(get(url, body))["result"][2:])
                 row["onchain_pointer_data"] = code[1:].hex()
                 time.sleep(0.2)
+        # "versioned" contracts (no metadataInfo): currentVersion(), versionInfo(v) =
+        # (address, string, string uri, uint256, uint256); uri = ipfs:// project metadata
+        for row in out:
+            if row["chain"] != chain.lower() or "error" not in row:
+                continue
+            try:
+                v = int.from_bytes(eth_call(url, row["id"], "0x9d888e86"), "big")
+                info = eth_call(url, row["id"], "0x87114b8c" + f"{v:064x}")
+            except RuntimeError as e:
+                row["error"] += f"; versionInfo: {e}"[:200]
+                continue
+            off = int.from_bytes(info[64:96], "big")
+            n = int.from_bytes(info[off:off + 32], "big")
+            row["version"] = v
+            row["version_uri"] = info[off + 32:off + 32 + n].decode("utf-8", "replace")
+            row["version_renderer"] = "0x" + info[12:32].hex()
+            del row["error"]
+            time.sleep(0.2)
         print(f"{chain}: {len(contracts)} contracts", flush=True)
     return out
 
@@ -165,6 +193,7 @@ def _varint(n: int) -> bytes:
 
 
 def fetch(rows_path: str, out_path: str, gateway: str) -> None:
+    gateways = gateway.split(",")
     with (gzip.open(rows_path, "rt") if rows_path.endswith(".gz") else open(rows_path)) as f:
         rows = [json.loads(line) for line in f]
     todo = []
@@ -173,6 +202,8 @@ def fetch(rows_path: str, out_path: str, gateway: str) -> None:
             todo.append((r, r["metadata_uri"]))
         elif r["chain"] != "tezos" and r.get("base_uri", "").startswith("ipfs://"):
             todo.append((r, r["base_uri"].rstrip("/") + "/1/metadata.json"))
+        elif r.get("version_uri", "").startswith("ipfs://"):
+            todo.append((r, r["version_uri"]))
     done: dict[tuple[str, str], dict[str, Any]] = {}
     if os.path.exists(out_path):
         with gzip.open(out_path, "rt") as f:
@@ -182,13 +213,22 @@ def fetch(rows_path: str, out_path: str, gateway: str) -> None:
         r, u = item
         d: dict[str, Any] = {"chain": r["chain"], "id": r["id"], "uri": u}
         path = u.removeprefix("ipfs://")
-        try:
-            data = get(gateway + path, timeout=180)
-        except (OSError, ValueError) as e:
-            d["error"] = f"{type(e).__name__} {getattr(e, 'code', '')}".strip()
-            return d
-        if "/" not in path and len(data) <= 262144 and cid_v0_file(data) != path:
-            d["error"] = "cid mismatch"
+        # the first gateway is our own kubo node (it verifies every block); the others are
+        # used only for a bare CIDv0 of one block, whose bytes we hash ourselves
+        verifiable = "/" not in path and path.startswith("Qm")
+        for g in gateways if verifiable else gateways[:1]:
+            try:
+                data = get(g + path, timeout=180)
+            except (OSError, ValueError) as e:
+                d["error"] = f"{type(e).__name__} {getattr(e, 'code', '')}".strip()
+                continue
+            if verifiable and (len(data) > 262144 or cid_v0_file(data) != path):
+                d["error"] = "cid mismatch or not a single block"
+                continue
+            d.pop("error", None)
+            d["via"] = g.split("/")[2]
+            break
+        if "error" in d:
             return d
         try:
             d["text"] = data.decode("utf-8")
