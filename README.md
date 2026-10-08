@@ -198,6 +198,22 @@ also does.
 Cross-checks: every Tezos `created_at` equals fxhashArchive's capture of the v1 API
 (27,051/27,051), and with the override every solo Tezos name it has matches.
 
+### EVM projects on chain
+
+The chain, not the API, says which projects exist. `scripts/fxhash_evm_registry.py` reads
+every fxhash EVM project factory (all deployed by 0x0E7De56c...) and writes
+`data/fxhash-evm-registry.jsonl.gz`, one line per project contract with its minted token
+count. On 2026-10-08:
+- Ethereum: FxIssuerFactory 140, MediaFactory 3 (2026-02, beacon proxies to
+  `CollectiveMedia`; 2 are named "Test Auction Mainnet"). 143 projects, 8,510 tokens.
+- Base: FxIssuerFactory 559, ProjectFactory 20, ProjectFactoryV2 111, FxDopplerFactory 107
+  (no registry: enumerated from its CREATE nonces). 797 projects, 851,207 tokens.
+- Every API project is in a registry. 176 projects are only on chain (22 Ethereum, 154
+  Base), and none of them has a minted token.
+- The 122 tokens of the 3 MediaFactory projects have no seed in `fxhash_evm_seeds.py`
+  output: those contracts have no `totalSupply()`, so the seeds script skipped them
+  (`total_supply_reverted`); their count here comes from `nextTokenId()` and `ownerOf`.
+
 ## Validation
 
 ```sh
