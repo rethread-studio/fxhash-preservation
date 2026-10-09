@@ -2,9 +2,11 @@
 """Check repos made by fxhash_version_history.py against the chain.
 
     uv run --with pycryptodome --with hpack python scripts/fxhash_version_history_check.py \
-        VERSIONS.jsonl NEWROOT OLDROOT
+        VERSIONS.jsonl NEWROOT OLDROOT [OUT.jsonl] [--unretrievable CID]...
 
-Per repo: one commit per version, in order, dates not decreasing; each commit's tree minus
+Per repo: one commit per version, in order (the `version:` line of each commit's
+`_source.txt`; only versions whose code is --unretrievable may have none), dates not
+decreasing; each commit's tree minus
 `_source.txt` rebuilds that version's code hash (IPFS: `ipfs add` variants of
 scripts/ipfs_cid.py; ONCHFS: onchfs.rebuilds); the newest tree equals the old repo's
 (OLDROOT) when the old repo held the current version's code. Prints one line per repo
@@ -49,9 +51,14 @@ def rebuilds(repo: Path, commit: str, link: str) -> bool:
 
 
 def main() -> None:
-    if len(sys.argv) != 4:
+    args = sys.argv[1:]
+    gone = {args[i + 1] for i, a in enumerate(args) if a == "--unretrievable"}
+    args = [a for i, a in enumerate(args)
+            if a != "--unretrievable" and (i == 0 or args[i - 1] != "--unretrievable")]
+    if len(args) not in (3, 4):
         raise SystemExit(__doc__)
-    versions, new_root, old_root = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+    versions, new_root, old_root = Path(args[0]), Path(args[1]), Path(args[2])
+    out = open(args[3], "w") if len(args) > 3 else None  # noqa: SIM115
     bad = 0
     with open(versions) as f:
         rows = [json.loads(line) for line in f]
@@ -64,15 +71,30 @@ def main() -> None:
         commits = git(new, "rev-list", "--reverse", "--format=%H %at", "HEAD").splitlines()
         commits = [c for c in commits if not c.startswith("commit ")]
         problems = []
-        if len(commits) != len(r["versions"]):
-            problems.append(f"{len(commits)} commits for {len(r['versions'])} versions")
+        # each commit says which version it holds; versions declared unretrievable may lack one
+        by_v = {v["v"]: v for v in r["versions"]}
+        held = []
+        for c in commits:
+            src = git(new, "show", f"{c.split()[0]}:_source.txt")
+            n = next((ln.split(":", 1)[1].strip() for ln in src.splitlines()
+                      if ln.startswith("version:")), "")
+            held.append(int(n) if n.isdigit() else None)
+        expected = [v["v"] for v in r["versions"]
+                    if v["code"].split("?")[0].split("://")[1].split("/")[0] not in gone]
+        if held != expected:
+            problems.append(f"commits hold versions {held}, expected {expected}")
         times = [int(c.split()[1]) for c in commits]
         if times != sorted(times):
             problems.append("dates decrease")
-        for c, v in zip(commits, r["versions"]):
-            if not rebuilds(new, c.split()[0], v["code"]):
-                problems.append(f"v{v['v']} does not rebuild {v['code']}")
-        old_code = git(old, "show", "HEAD:_source.txt").split("generative_uri: ")[1].split()[0]
+        rebuilt = []
+        for c, n in zip(commits, held):
+            v = by_v.get(n) if n else None
+            if v and rebuilds(new, c.split()[0], v["code"]):
+                rebuilt.append(v["v"])
+            else:
+                problems.append(f"commit {c[:10]} (v{n}) does not rebuild its version")
+        old_code = (git(old, "show", "HEAD:_source.txt").split("generative_uri: ")[1].split()[0]
+                    if old.exists() else None)
         if old_code == r["versions"][-1]["code"].split("?")[0]:
             ls = [git(x, "ls-tree", "-r", "HEAD") for x in (new, old)]
             strip = [{ln for ln in s.splitlines() if not ln.endswith("\t_source.txt")}
@@ -81,6 +103,13 @@ def main() -> None:
                 problems.append("newest tree differs from the old repo's")
         bad += bool(problems)
         print("❌" if problems else "✅", new.relative_to(new_root), len(commits), *problems)
+        if out:
+            out.write(json.dumps({"chain": r["chain"], "id": r["id"],
+                                  "repo": str(new.relative_to(new_root)),
+                                  "rebuilt": [] if problems else rebuilt,
+                                  "problems": problems}) + "\n")
+    if out:
+        out.close()
     sys.exit(1 if bad else 0)
 
 

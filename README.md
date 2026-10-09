@@ -268,10 +268,18 @@ python3 scripts/fxhash_links_verify.py data/fxhash-projects-onchain.jsonl.gz \
 - 3,088 burned: removed from the issuer ledger, no repo.
 - 321 unverifiable on chain: the contract names only https URLs (318 have a repo built from
   the archive, 3 have none).
-- 8 active Tezos projects are missing from the archive, so they have no repo.
-- 20 Base projects were updated after mint (`versionInfo`, `scripts/fxhash_evm_versions.py`):
-  each version's code is anchored, git holds one. 48 code versions are not in git, and for
-  Soft Static git holds version 1 of 2.
+- 8 active Tezos projects were missing from the archive; since 2026-10-09 they are repos
+  built from IPFS by their on-chain CID (forge: 28,193 repos).
+- 20 Base projects were updated after mint (`versionInfo`, `scripts/fxhash_evm_versions.py`,
+  each version dated at the block where `currentVersion()` reached it). Their repos have one
+  commit per version, dated then (`scripts/fxhash_version_history.py`), and every commit
+  rebuilds its version's on-chain hash (`scripts/fxhash_version_history_check.py`,
+  `data/fxhash-evm-version-history.jsonl`). 2 versions have no commit: Kraswerk v2 and
+  SPACE WANDERER v2, short-lived (21 min, 2 h), anchored on chain but with no copy on IPFS
+  on 2026-10-09 (no providers, Filebase 504); the next commit's message names them.
+
+On 2026-10-09 after these: 27,782 reproduce, 46 with `.git`, 47 accepted, 3,088 burned,
+321 unverifiable, and 2 code versions not in git.
 
 ### Art gateway: fxhash.gakoy.com
 

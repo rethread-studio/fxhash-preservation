@@ -70,6 +70,8 @@ def main() -> None:
                     help="onchfs_repos.py output (repeatable)")
     ap.add_argument("--causes", help="ipfs_cid_diff.py output for the unmatched repos")
     ap.add_argument("--versions", help="fxhash_evm_versions.py output")
+    ap.add_argument("--history", help="fxhash_version_history_check.py output: versions "
+                    "whose commit rebuilds them count as in git")
     a = ap.parse_args()
     with (gzip.open(a.onchain, "rt") if a.onchain.endswith(".gz") else open(a.onchain)) as f:
         chain = {(r["chain"], r["id"].lower()): r for r in map(json.loads, f)
@@ -91,6 +93,11 @@ def main() -> None:
         with open(a.versions) as f:
             for r in map(json.loads, f):
                 versions[(r["chain"], r["id"].lower())] = [cid(v["code"]) for v in r["versions"]]
+    history: dict[tuple[str, str], set[int]] = {}
+    if a.history:
+        with open(a.history) as f:
+            history = {(r["chain"], r["id"].lower()): set(r["rebuilt"])
+                       for r in map(json.loads, f)}
     git: dict[tuple[str, str], dict[str, Any]] = {}
     with open(a.cidall) as f:
         for r in map(json.loads, f):
@@ -154,7 +161,8 @@ def main() -> None:
             # an updated EVM project: every version's code is anchored; git holds one
             vcodes = versions.get(key)
             if vcodes and g:
-                held = set(row.get("git_cids", []))
+                held = set(row.get("git_cids", [])) | {
+                    v for i, v in enumerate(vcodes) if i + 1 in history.get(key, set())}
                 row["versions_not_in_git"] = len({v for v in vcodes if v not in held})
                 k = [i + 1 for i, v in enumerate(vcodes) if v in held]
                 if row["verdict"].startswith("unexplained") and k:
