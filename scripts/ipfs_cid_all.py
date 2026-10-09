@@ -74,8 +74,13 @@ def init(api: dict[str, str]) -> None:
     _api.update({k.split(":", 1)[1]: v for k, v in api.items() if not k.startswith("tezos:")})
 
 
+def rel_name(repo: str) -> str:
+    """<platform>/<year>/<project>, whatever GITROOT is."""
+    return "/".join(Path(repo).parts[-3:]).removesuffix(".git")
+
+
 def check(repo: str) -> dict[str, Any]:
-    rel = repo.split("/fxhash-git/", 1)[1].removesuffix(".git")
+    rel = rel_name(repo)
     row: dict[str, Any] = {"repo": rel}
     git = ["git", f"--git-dir={repo}"]
     src = subprocess.run([*git, "show", "HEAD:_source.txt"], capture_output=True, text=True,
@@ -150,7 +155,7 @@ def main() -> None:
             os.replace(out_path + ".tmp", out_path)
             rows = kept
         done = {r["repo"] for r in rows}
-    todo = [r for r in repos if r.split("/fxhash-git/", 1)[1].removesuffix(".git") not in done]
+    todo = [r for r in repos if rel_name(r) not in done]
     print(f"{len(repos)} repos, {len(todo)} to check", flush=True)
     with open(out_path, "a") as out, ProcessPoolExecutor(workers, initializer=init,
                                                      initargs=(api,)) as pool:
