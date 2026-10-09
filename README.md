@@ -313,6 +313,18 @@ python3 scripts/art_gateway_render_check.py index.json.gz examples.json.gz 200 o
 Deployment on rootmab: `deploy/fxhash.gakoy.com` (nginx, wildcard cert by DNS-01, see
 `../rootmab/gakoy.md`), `deploy/fxhash-art-gateway.service`.
 
+Findings (2026-10-09):
+- Render check, 200 random artworks through the live gateway, headless Chrome, 8 s:
+  177 drew (88.5%), 12 blank, 11 timeouts (`data/art-render-sample-200.json`). No
+  failure came from the gateway: re-rendered without it, 15 fail the same way, and 8
+  differ from run to run (e.g. SunFlower draws in `onload` callbacks and loses a race in
+  headless Chrome under any server; 3 of 3 later runs drew through the gateway).
+- 1,115 of the 27,975 artworks (4%) load resources from other hosts in their HTML
+  (`scripts/art_external_refs.py`, `data/art-external-refs.jsonl`): cdnjs.cloudflare.com
+  423, openprocessing.org 253, cdn.jsdelivr.net 227, unpkg.com 132, Google Fonts ~60,
+  cdn.rawgit.com 11 (already shut down). They depend on those servers, and the gateway's
+  policy shows them broken.
+
 ## Validation
 
 ```sh
