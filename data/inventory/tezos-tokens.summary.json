@@ -1,0 +1,66 @@
+{
+ "documents": 1845633,
+ "missing": 0,
+ "unparsable": 0,
+ "distinct_ipfs_cids": 3912934,
+ "fields": {
+  "artifactUri": {
+   "links": 1845633,
+   "distinct": 296076,
+   "schemes": {
+    "ipfs": 1817102,
+    "onchfs": 28531
+   }
+  },
+  "displayUri": {
+   "links": 1845633,
+   "distinct": 1822626,
+   "schemes": {
+    "ipfs": 1845633
+   }
+  },
+  "thumbnailUri": {
+   "links": 1845633,
+   "distinct": 1822480,
+   "schemes": {
+    "ipfs": 1845633
+   }
+  },
+  "generatorUri": {
+   "links": 1598205,
+   "distinct": 23751,
+   "schemes": {
+    "ipfs": 1569674,
+    "onchfs": 28531
+   }
+  },
+  "description": {
+   "links": 571,
+   "distinct": 5,
+   "schemes": {
+    "https": 571
+   }
+  },
+  "displayStillUri": {
+   "links": 283,
+   "distinct": 283,
+   "schemes": {
+    "ipfs": 283
+   }
+  },
+  "tags": {
+   "links": 100,
+   "distinct": 1,
+   "schemes": {
+    "https": 100
+   }
+  },
+  "attributes.value": {
+   "links": 25,
+   "distinct": 5,
+   "schemes": {
+    "https": 25
+   }
+  }
+ }
+}

@@ -281,6 +281,26 @@ python3 scripts/fxhash_links_verify.py data/fxhash-projects-onchain.jsonl.gz \
 On 2026-10-09 after these: 27,782 reproduce, 46 with `.git`, 47 accepted, 3,088 burned,
 321 unverifiable, and 2 code versions not in git.
 
+### Every other link: inventory (2026-10-09)
+
+All from documents whose CID the chain anchors, each fetched by hash:
+`scripts/fxhash_link_inventory.py` (summaries in `data/inventory/`, the CID lists on the
+archive drive in `fxhash-inventory/`).
+- Project documents: 30,825, 94,289 distinct IPFS CIDs (display image, thumbnail, code).
+- Tezos token documents: all 1,845,633 (token_metadata on chain is `ipfs://` for every
+  token of the three GENTK contracts), 3,912,934 distinct IPFS CIDs: ~1.82 M display
+  images, ~1.82 M thumbnails, 296,076 artifact folders (per-token code folders of early
+  tokens; not sized), 28,531 ONCHFS artifacts.
+- EVM token documents: only 149 contracts (13,130 tokens) have an `ipfs://` tokenURI; the
+  other 516 (846,587 tokens) return `https://media.fxhash.xyz/…` (unverifiable on chain).
+  Fetched under the 357 anchored folders (`scripts/evm_token_metadata_fetch.py`, run next
+  to rootmab's kubo): 10,219 token documents, 21,501 distinct CIDs.
+- Size, from hash-checked root blocks of random samples (`scripts/ipfs_size_sample.py`,
+  `data/inventory/*sizes.jsonl`, 95% intervals): Tezos token display images 3.55 TB
+  (3.19–3.91), thumbnails 0.20 TB (0.199–0.210); project display images 0.05 TB
+  (0.04–0.06), thumbnails 0.004 TB. In all about 3.8 TB, plus the unsized artifact
+  folders and ~0.02 TB of EVM images.
+
 ### Art gateway: fxhash.gakoy.com
 
 Displays any artwork from the forge's repos, without IPFS. A token's `artifactUri` with

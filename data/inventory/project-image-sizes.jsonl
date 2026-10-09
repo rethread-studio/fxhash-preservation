@@ -1,0 +1,2 @@
+{"field": "displayUri", "distinct": 30416, "sampled": 500, "sized": 500, "dirs": 0, "errors": 0, "mean_bytes": 1598315, "mean_95": [1177910, 2018721], "total_est_bytes": 48614363579, "total_95": [35827309191, 61401417967]}
+{"field": "thumbnailUri", "distinct": 30402, "sampled": 300, "sized": 300, "dirs": 0, "errors": 0, "mean_bytes": 118998, "mean_95": [110269, 127726], "total_est_bytes": 3617770305, "total_95": [3352404365, 3883136245]}

@@ -1,0 +1,74 @@
+{
+ "documents": 10219,
+ "missing": 205,
+ "unparsable": 0,
+ "distinct_ipfs_cids": 21501,
+ "fields": {
+  "generatorUri": {
+   "links": 10219,
+   "distinct": 149,
+   "schemes": {
+    "ipfs": 3868,
+    "onchfs": 6351
+   }
+  },
+  "artifactUri": {
+   "links": 10219,
+   "distinct": 6453,
+   "schemes": {
+    "ipfs": 3868,
+    "onchfs": 6351
+   }
+  },
+  "displayUri": {
+   "links": 10219,
+   "distinct": 10138,
+   "schemes": {
+    "ipfs": 10219
+   }
+  },
+  "thumbnailUri": {
+   "links": 10219,
+   "distinct": 10133,
+   "schemes": {
+    "ipfs": 10219
+   }
+  },
+  "image": {
+   "links": 10219,
+   "distinct": 10138,
+   "schemes": {
+    "ipfs": 10219
+   }
+  },
+  "external_url": {
+   "links": 10219,
+   "distinct": 10219,
+   "schemes": {
+    "https": 10219
+   }
+  },
+  "animation_url": {
+   "links": 10219,
+   "distinct": 6453,
+   "schemes": {
+    "ipfs": 3868,
+    "https": 6351
+   }
+  },
+  "displayStillUri": {
+   "links": 1133,
+   "distinct": 1128,
+   "schemes": {
+    "ipfs": 1133
+   }
+  },
+  "image_still": {
+   "links": 1133,
+   "distinct": 1128,
+   "schemes": {
+    "ipfs": 1133
+   }
+  }
+ }
+}

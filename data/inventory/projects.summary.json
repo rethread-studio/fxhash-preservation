@@ -1,0 +1,117 @@
+{
+ "documents": 30825,
+ "missing": 2,
+ "unparsable": 0,
+ "distinct_ipfs_cids": 94289,
+ "fields": {
+  "artifactUri": {
+   "links": 30825,
+   "distinct": 29895,
+   "schemes": {
+    "ipfs": 30313,
+    "onchfs": 512
+   }
+  },
+  "displayUri": {
+   "links": 30825,
+   "distinct": 30418,
+   "schemes": {
+    "ipfs": 30825
+   }
+  },
+  "thumbnailUri": {
+   "links": 30825,
+   "distinct": 30403,
+   "schemes": {
+    "ipfs": 30825
+   }
+  },
+  "generativeUri": {
+   "links": 30694,
+   "distinct": 29717,
+   "schemes": {
+    "ipfs": 30218,
+    "onchfs": 476
+   }
+  },
+  "image": {
+   "links": 131,
+   "distinct": 129,
+   "schemes": {
+    "ipfs": 131
+   }
+  },
+  "generatorUri": {
+   "links": 130,
+   "distinct": 130,
+   "schemes": {
+    "ipfs": 94,
+    "onchfs": 36
+   }
+  },
+  "external_url": {
+   "links": 130,
+   "distinct": 130,
+   "schemes": {
+    "https": 130
+   }
+  },
+  "animation_url": {
+   "links": 130,
+   "distinct": 130,
+   "schemes": {
+    "ipfs": 94,
+    "https": 36
+   }
+  },
+  "displayStillUri": {
+   "links": 38,
+   "distinct": 38,
+   "schemes": {
+    "ipfs": 38
+   }
+  },
+  "image_still": {
+   "links": 9,
+   "distinct": 9,
+   "schemes": {
+    "ipfs": 9
+   }
+  },
+  "childrenDescription": {
+   "links": 5,
+   "distinct": 5,
+   "schemes": {
+    "https": 5
+   }
+  },
+  "description": {
+   "links": 5,
+   "distinct": 5,
+   "schemes": {
+    "https": 5
+   }
+  },
+  "tags": {
+   "links": 1,
+   "distinct": 1,
+   "schemes": {
+    "https": 1
+   }
+  },
+  "external_link": {
+   "links": 1,
+   "distinct": 1,
+   "schemes": {
+    "https": 1
+   }
+  },
+  "ipfsBackupUri": {
+   "links": 1,
+   "distinct": 1,
+   "schemes": {
+    "ipfs": 1
+   }
+  }
+ }
+}
