@@ -248,6 +248,10 @@ def fetch(rows_path: str, out_path: str, gateway: str, onchfs_dir: str | None = 
         if data is None and r.get("version_uri") == u:
             # some versions name a folder of token metadata, like a base URI
             data, d = fetch_uri(u.rstrip("/") + "/1/metadata.json")
+        if data is None and (r.get("version_uri") == u or u.endswith("/1/metadata.json")):
+            # or a folder with a single metadata.json (no per-token ids)
+            data, d = fetch_uri(u.removesuffix("/1/metadata.json").rstrip("/")
+                                + "/metadata.json")
         d = {"chain": r["chain"], "id": r["id"], **d}
         if data is None:
             return d

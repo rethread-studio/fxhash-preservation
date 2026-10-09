@@ -253,6 +253,26 @@ The 94 left (`data/ipfs-cid-unmatched.jsonl`, from `scripts/ipfs_cid_diff.py`):
 - 31 have per-folder UnixFS modes that no rule derives, and 16 have empty folders, which
   git can't store. Not rebuildable from git; accepted.
 
+`scripts/fxhash_links_verify.py` gives every project, from the chain and the API (31,284),
+its chain path and a verdict; it exits 1 on any unexplained one. On 2026-10-09:
+
+```sh
+python3 scripts/fxhash_links_verify.py data/fxhash-projects-onchain.jsonl.gz \
+    $DRIVE/fxhash-project-metadata.jsonl.gz data/fxhash-api-generative-uri.json \
+    data/ipfs-cid-all.jsonl OUT.jsonl --causes data/ipfs-cid-unmatched.jsonl \
+    --onchfs data/onchfs-repos.jsonl --versions data/fxhash-evm-versions.jsonl
+```
+
+- 27,773 git reproduces the chain's hash (27,184 IPFS, 589 ONCHFS); 46 with the uploaded
+  `.git` folder (above); 47 accepted differences (above).
+- 3,088 burned: removed from the issuer ledger, no repo.
+- 321 unverifiable on chain: the contract names only https URLs (318 have a repo built from
+  the archive, 3 have none).
+- 8 active Tezos projects are missing from the archive, so they have no repo.
+- 20 Base projects were updated after mint (`versionInfo`, `scripts/fxhash_evm_versions.py`):
+  each version's code is anchored, git holds one. 48 code versions are not in git, and for
+  Soft Static git holds version 1 of 2.
+
 ## Validation
 
 ```sh
