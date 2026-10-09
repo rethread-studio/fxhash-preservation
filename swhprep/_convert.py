@@ -427,6 +427,11 @@ def _snapshot_tree(
            "-c", f"core.fileMode={'false' if ignore_filemode else 'true'}",
            "-c", "advice.addEmbeddedRepo=false"]
     flatten = flatten or []
+    # Store every file as it is on disk: info/attributes outranks the source's own
+    # .gitattributes, whose `text`/`eol` would otherwise turn CRLF into LF in the tree.
+    attributes = repo / "info" / "attributes"
+    attributes.parent.mkdir(exist_ok=True)
+    attributes.write_text("* -text -filter -ident -working-tree-encoding\n")
     try:
         index.unlink(missing_ok=True)
         if start:
@@ -439,6 +444,7 @@ def _snapshot_tree(
         return git("write-tree", git_dir=repo, env=env)
     finally:
         index.unlink(missing_ok=True)
+        attributes.unlink(missing_ok=True)
 
 
 def _add_flat(

@@ -322,3 +322,13 @@ def test_clone_roundtrip_matches_source(tmp_path: Path, ident: Identity) -> None
                    check=True, env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull})
     for rel in ["a", "d/e/f", "crlf.txt"]:
         assert (tmp_path / "c" / rel).read_bytes() == (src / rel).read_bytes()
+
+
+def test_files_stored_as_on_disk_despite_gitattributes(tmp_path: Path, ident: Identity) -> None:
+    # a source's own `* text=auto` must not turn its CRLF files into LF in the tree
+    src = make_tree(tmp_path / "p", {".gitattributes": "* text=auto\n", "a.txt": "x\r\ny\r\n"})
+    convert_one(src, tmp_path / "p.git", ident)
+    blob = subprocess.run(["git", "--git-dir", str(tmp_path / "p.git"), "cat-file", "-p",
+                           "main:a.txt"], capture_output=True, check=True).stdout
+    assert blob == b"x\r\ny\r\n"
+    assert not (tmp_path / "p.git" / "info" / "attributes").exists()

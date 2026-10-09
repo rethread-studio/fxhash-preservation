@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -206,3 +207,15 @@ def test_empty_dirs_turned_files_in_gitdir(tmp_path: Path, ident: Identity) -> N
     assert sorted((str(p), p.stat().st_mtime_ns) for p in gd.rglob("*")) == before
     assert not (tmp_path / "p.git.src").exists()
     git("fsck", "--strict", git_dir=tmp_path / "p.git")
+
+
+def test_snapshot_keeps_crlf_despite_gitattributes(tmp_path: Path, ident: Identity) -> None:
+    src = make_repo(tmp_path / "p")
+    (src / ".gitattributes").write_text("* text=auto\n")
+    commit(src, "attributes", "2018-03-01T00:00:00+00:00")
+    (src / "a.txt").write_bytes(b"v2\r\n")  # a Windows checkout of the same content
+    r = convert_one(src, tmp_path / "p.git", ident, head_only=True)
+    assert "dirty_worktree" in r.issues
+    blob = subprocess.run(["git", "--git-dir", str(tmp_path / "p.git"), "cat-file", "blob",
+                           "master:a.txt"], capture_output=True, check=True).stdout
+    assert blob == b"v2\r\n"
