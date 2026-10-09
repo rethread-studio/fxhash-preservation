@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Every version's code link, for the versioned fxhash EVM contracts past version 1.
 
-    python3 scripts/fxhash_evm_versions.py ONCHAIN.jsonl.gz OUT.jsonl [BASE_RPC] [SSH_HOST]
+    python3 scripts/fxhash_evm_versions.py ONCHAIN.jsonl.gz OUT.jsonl [BASE_RPC] [SSH_HOST] \
+        [ARCHIVE_RPC]
 
 ONCHAIN from fxhash_project_onchain.py list (`version` = currentVersion()). For each Base
 contract with version > 1, `versionInfo(v)` for v = 1..version gives an ipfs:// URI: a
 project metadata document (`generativeUri`), or a folder of token metadata
 (`<id>/metadata.json` or `metadata.json`, `generatorUri`). Documents are read through the
-kubo node on SSH_HOST (default rootmab). One line per contract: [{v, uri, code}].
+kubo node on SSH_HOST (default rootmab). With ARCHIVE_RPC (a Base archive node), each
+version from 2 on also gets the first block where currentVersion() reached it, and that
+block's time. One line per contract: [{v, uri, code[, block, time]}].
 """
 
 from __future__ import annotations
@@ -31,6 +34,40 @@ def eth_call(url: str, to: str, data: str) -> bytes:
         return bytes.fromhex(json.loads(r.read())["result"][2:])
 
 
+def rpc(url: str, method: str, params: list[object]) -> object:
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
+    req = urllib.request.Request(url, body, {"Content-Type": "application/json",
+                                             "User-Agent": "curl/8"})
+    err: object = None
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                res = json.loads(r.read())
+            if "error" not in res:
+                return res["result"]
+            err = res["error"]
+        except OSError as e:
+            err = e
+        time.sleep(2 ** attempt)
+    raise RuntimeError(f"{method}: {err}")
+
+
+def version_at(url: str, to: str, block: int) -> int:
+    out = str(rpc(url, "eth_call", [{"to": to, "data": "0x9d888e86"}, hex(block)]))
+    return int(out, 16) if len(out) > 2 else 0  # "0x": not deployed yet
+
+
+def first_block(url: str, to: str, v: int, lo: int, hi: int) -> int:
+    """Smallest block in (lo, hi] where currentVersion() >= v (it only grows)."""
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if version_at(url, to, mid) >= v:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
 def ipfs(host: str, *args: str) -> str | None:
     p = subprocess.run(["ssh", "-n", "-T", host, f"{IPFS} {' '.join(args)}"],
                        capture_output=True, text=True, check=False)
@@ -52,11 +89,13 @@ def code_link(host: str, uri: str) -> str:
 
 
 def main() -> None:
-    if len(sys.argv) not in (3, 4, 5):
+    if len(sys.argv) not in (3, 4, 5, 6):
         raise SystemExit(__doc__)
     onchain, out_path = sys.argv[1:3]
     url = sys.argv[3] if len(sys.argv) > 3 else "https://base-rpc.publicnode.com"
     host = sys.argv[4] if len(sys.argv) > 4 else "rootmab"
+    archive = sys.argv[5] if len(sys.argv) > 5 else None
+    head = int(str(rpc(archive, "eth_blockNumber", [])), 16) if archive else 0
     with gzip.open(onchain, "rt") as f, open(out_path, "w") as out:
         for r in map(json.loads, f):
             if r["chain"] != "base" or r.get("version", 1) <= 1:
@@ -69,6 +108,16 @@ def main() -> None:
                 uri = info[off + 32:off + 32 + n].decode()
                 vs.append({"v": v, "uri": uri, "code": code_link(host, uri)})
                 time.sleep(0.2)
+            lo = 0
+            for x in vs[1:] if archive else []:
+                assert archive
+                b = first_block(archive, r["id"], x["v"], lo, head)
+                blk = rpc(archive, "eth_getBlockByNumber", [hex(b), False])
+                assert isinstance(blk, dict)
+                x["block"] = b
+                x["time"] = time.strftime("%Y-%m-%dT%H:%M:%S+00:00",
+                                          time.gmtime(int(blk["timestamp"], 16)))
+                lo = b - 1
             out.write(json.dumps({"chain": r["chain"], "id": r["id"], "versions": vs}) + "\n")
             out.flush()
 
