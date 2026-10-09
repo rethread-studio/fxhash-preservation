@@ -6,7 +6,8 @@
 For each GITROOT/<platform>/<year>/<project>.git: the reference CID is the
 generative_uri in `_source.txt` (written by the archive's maker) and, independently,
 the one the fxhash API gives for the same token id (API.json: {id: generative_uri},
-from `fetch_api_generative_uris`). The tree of `main` minus `_source.txt` is hashed
+from `fetch_api_generative_uris`). The tree of HEAD (`main`, or the kept branch of the 42 source git repos) minus
+`_source.txt` is hashed
 with `ipfs add -n`: first `-H` (kubo defaults, hidden files), then without `-H`, then
 with UnixFS mode 0644 on subdirectories, all of them or all but `__MACOSX`
 (scripts/ipfs_cid.py). One line per repo in OUT.jsonl; already present repos are skipped,
@@ -77,7 +78,7 @@ def check(repo: str) -> dict[str, Any]:
     rel = repo.split("/fxhash-git/", 1)[1].removesuffix(".git")
     row: dict[str, Any] = {"repo": rel}
     git = ["git", f"--git-dir={repo}"]
-    src = subprocess.run([*git, "show", "main:_source.txt"], capture_output=True, text=True,
+    src = subprocess.run([*git, "show", "HEAD:_source.txt"], capture_output=True, text=True,
                          env=ENV, check=False)
     m = re.search(r"generative_uri: ipfs://([A-Za-z0-9]+)", src.stdout)
     row["want"] = m.group(1) if m else None
@@ -93,7 +94,7 @@ def check(repo: str) -> dict[str, Any]:
     try:
         tree = tmp / "t"
         tree.mkdir()
-        tar = subprocess.run([*git, "archive", "main"], check=True, capture_output=True,
+        tar = subprocess.run([*git, "archive", "HEAD"], check=True, capture_output=True,
                              env=ENV).stdout
         subprocess.run(["tar", "-x", "-C", str(tree)], input=tar, check=True)
         (tree / "_source.txt").unlink(missing_ok=True)
