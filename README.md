@@ -223,6 +223,36 @@ count. On 2026-10-08:
   `tokenInfo(id)` = (version, seed) (getter `tokenInfo(version,seed)`). Ethereum seeds:
   8,510, of which the 8,388 of the earlier run are unchanged.
 
+### Code hash on chain, rebuilt from git
+
+`scripts/ipfs_cid_all.py` hashes the tree of each repo's HEAD, minus `_source.txt`, with
+`ipfs add -n` and compares it with the CID the chain anchors (`-H`, or UnixFS mode 0644 on
+subfolders, see `scripts/ipfs_cid.py`). On 2026-10-09: 27,502 of the 27,596 IPFS projects
+rebuild it; the 589 ONCHFS repos all rebuild their on-chain root (`scripts/onchfs_repos.py`).
+The 94 left (`data/ipfs-cid-unmatched.jsonl`, from `scripts/ipfs_cid_diff.py`):
+
+- 47 uploads contain a `.git` folder (44 at the top, 3 nested). Each repo is the artist's
+  own history, mirrored from that folder, plus a commit for the uploaded working tree. The
+  CID also covers the `.git` folder's bytes (objects, index, logs), which no clone
+  reproduces, so it can't be rebuilt from the forge alone. To recompute it, put the
+  uploaded `.git` folder back next to HEAD's files and hash the whole folder:
+
+  ```sh
+  git clone https://fxhash-preservation.rethread.art/<repo>.git work
+  mkdir upload && git --git-dir=work/.git archive HEAD | tar -x -C upload/
+  rm upload/_source.txt
+  ipfs get <cid>/.git -o upload/.git      # each .git of the upload (3 are nested), or
+                                          # the folders kept on the archive drive
+  ipfs add -r -n -Q -H upload/            # = <cid>  (python3 scripts/ipfs_cid.py upload/
+                                          #   for the mode-0644 variants)
+  ```
+
+  Checked on 2026-10-09 for all 47 from the archive drive's folders. 8 of them first had
+  their `.git/index` restored from IPFS: a `git status` run during the conversion had
+  refreshed it.
+- 31 have per-folder UnixFS modes that no rule derives, and 16 have empty folders, which
+  git can't store. Not rebuildable from git; accepted.
+
 ## Validation
 
 ```sh
