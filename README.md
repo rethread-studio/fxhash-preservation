@@ -273,6 +273,38 @@ python3 scripts/fxhash_links_verify.py data/fxhash-projects-onchain.jsonl.gz \
   each version's code is anchored, git holds one. 48 code versions are not in git, and for
   Soft Static git holds version 1 of 2.
 
+### Art gateway: fxhash.gakoy.com
+
+Displays any artwork from the forge's repos, without IPFS. A token's `artifactUri` with
+its scheme swapped:
+
+```
+ipfs://<cid>/?fxhash=...    -> https://fxhash.gakoy.com/ipfs/<cid>/?fxhash=...
+onchfs://<root>/?fxhash=... -> https://fxhash.gakoy.com/onchfs/<root>/?fxhash=...
+```
+
+redirects to `https://<label>.fxhash.gakoy.com/?fxhash=...` (label: CIDv1 base32, or `o` +
+base32 of the ONCHFS root; one host per artwork, so artworks share no storage).
+`scripts/art_gateway.py` serves `<commit>:<path>` of the mapped repo straight from git;
+`scripts/art_gateway_index.py` builds the map (every commit with a `_source.txt` on HEAD's
+first-parent line, so version histories serve each version). Header `X-Fxhash-Verified`:
+`rebuilds` (the tree rebuilds that hash) or `files equal: <cause>`. The page policy runs
+inline and evaluated scripts but loads nothing from other hosts, so an artwork that pulls
+a library from a CDN shows up broken: it depends on that server. Public IPFS gateways
+fail differently: Filebase's `default-src 'self'` blocks the inline fxhash snippet.
+
+```sh
+python3 scripts/art_gateway_index.py $DRIVE/fxhash-git index.json.gz \
+    --cidall data/ipfs-cid-all.jsonl --onchfs data/onchfs-repos.jsonl \
+    --causes data/ipfs-cid-unmatched.jsonl
+python3 scripts/art_gateway.py index.json.gz $DRIVE/fxhash-git --domain art.localhost
+# render check in headless Chrome over a random sample (needs Pillow)
+python3 scripts/art_gateway_render_check.py index.json.gz examples.json.gz 200 out/
+```
+
+Deployment on rootmab: `deploy/fxhash.gakoy.com` (nginx, wildcard cert by DNS-01, see
+`../rootmab/gakoy.md`), `deploy/fxhash-art-gateway.service`.
+
 ## Validation
 
 ```sh

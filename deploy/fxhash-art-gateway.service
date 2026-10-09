@@ -1,0 +1,21 @@
+# rootmab: /etc/systemd/system/fxhash-art-gateway.service
+# Art gateway (scripts/art_gateway.py) behind nginx vhost fxhash.gakoy.com.
+# Code: /opt/fxhash-art-gateway/; index: /srv/fxhash-art/index.json.gz (art_gateway_index.py).
+[Unit]
+Description=fxhash art gateway (artworks served from the git forge)
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+ExecStart=/usr/bin/python3 /opt/fxhash-art-gateway/art_gateway.py /srv/fxhash-art/index.json.gz /srv/fxhash-git --host 127.0.0.1 --port 8095 --domain fxhash.gakoy.com
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/srv/fxhash-git /srv/fxhash-art /opt/fxhash-art-gateway
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
