@@ -2,7 +2,7 @@
 """Art gateway: serve fxhash artworks from the forge's bare git repos (stdlib only).
 
     python3 scripts/art_gateway.py INDEX.json.gz GITROOT [--host 127.0.0.1] [--port 8095]
-        [--domain fxhash.gakoy.com]
+        [--domain fxhash.gakoy.com] [--ext ARCHIVE]
 
 Behind nginx. `<label>.<domain>/<path>` serves `<commit>:<path>` of the repo the index
 (art_gateway_index.py) maps the label to; `/` and folders serve their `index.html`;
@@ -11,6 +11,12 @@ Behind nginx. `<label>.<domain>/<path>` serves `<commit>:<path>` of the repo the
 `artifactUri` works by replacing `ipfs://` with `https://<domain>/ipfs/`. Every artwork has
 its own origin; the policy runs inline and evaluated scripts but loads nothing from
 elsewhere. `X-Fxhash-Verified` tells how the served tree relates to the on-chain hash.
+
+With --ext (an ext_archive.py archive of the outside libraries, fonts and files artworks
+load), every artwork host also serves `/_ext/<local path>` from it, and in the HTML, CSS
+and JavaScript it serves, each archived outside URL is replaced by that local path, so the
+artwork loads the archived copy. `X-Fxhash-Rewritten` counts the replacements; the git
+tree is untouched, and URLs not in the archive stay as they are (and stay blocked).
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -61,9 +68,68 @@ def content_type(path: str) -> str:
                 else "")
 
 
+REWRITABLE = ("text/html", "text/css", "text/javascript", "application/javascript")
+
+
+class ExtArchive:
+    """Archived outside resources (ext_archive.py): URL -> local file, and the rewriter."""
+
+    def __init__(self, root: Path):
+        self.files = root / "files"
+        self.local: dict[str, str] = {}  # https://host/path -> local path
+        self.types: dict[str, str] = {}  # local path -> content type
+        with open(root / "manifest.jsonl") as f:
+            for r in map(json.loads, f):
+                if r.get("status") == 200 and r.get("integrity") != "mismatch":
+                    self.local[r["url"]] = r["local"]
+                    self.types[r["local"]] = r.get("content_type") or content_type(r["local"])
+        hosts = sorted({u.split("//", 1)[1].split("/", 1)[0] for u in self.local},
+                       key=len, reverse=True)
+        self.pattern = re.compile(
+            r"(?:https?:)?//(" + "|".join(re.escape(h) for h in hosts) + r")"
+            r"(/[^\s\"'`)<>\\]*)?") if hosts else None
+
+    def rewrite(self, body: bytes) -> tuple[bytes, int]:
+        if not self.pattern:
+            return body, 0
+        text = body.decode("utf-8", "surrogateescape")
+        n = 0
+
+        def sub(m: re.Match[str]) -> str:
+            nonlocal n
+            rest = m.group(2) or ""
+            for scheme in ("https://", "http://"):
+                local = self.local.get(scheme + m.group(1) + rest)
+                if local:
+                    n += 1
+                    return "/_ext/" + local
+            return m.group(0)
+
+        text = self.pattern.sub(sub, text)
+        return text.encode("utf-8", "surrogateescape"), n
+
+    def get(self, local: str) -> tuple[bytes, str] | None:
+        local = posixpath.normpath(local)
+        if local.startswith("..") or local not in self.types:
+            return None
+        return (self.files / local).read_bytes(), self.types[local]
+
+
 class Gateway:
-    def __init__(self, index: dict[str, dict[str, Any]], gitroot: Path, domain: str):
-        self.index, self.gitroot, self.domain = index, gitroot, domain
+    def __init__(self, index: dict[str, dict[str, Any]], gitroot: Path, domain: str,
+                 ext: ExtArchive | None = None):
+        self.index, self.gitroot, self.domain, self.ext = index, gitroot, domain, ext
+
+    def finish(self, status: int, headers: dict[str, str],
+               body: bytes) -> tuple[int, dict[str, str], bytes]:
+        """Point archived outside URLs of a served text file to their local copies."""
+        if self.ext and status == 200 and headers.get("Content-Type", "").startswith(
+                REWRITABLE):
+            body, n = self.ext.rewrite(body)
+            if n:
+                headers["X-Fxhash-Rewritten"] = f"{n} outside URL(s) -> /_ext/"
+                headers["ETag"] = headers.get("ETag", "").rstrip('"') + f'-ext{n}"'
+        return status, headers, body
 
     def git(self, repo: str, *args: str, binary: bool = False) -> Any:
         # the repos belong to the forge's user, not to the one this runs as
@@ -80,6 +146,14 @@ class Gateway:
         rel = "" if rel == "." else rel
         if rel.startswith("..") or rel in HIDDEN:
             return 404, {}, b"not found\n"
+        if self.ext and rel.startswith("_ext/"):
+            got = self.ext.get(rel[5:])
+            if not got:
+                return 404, {}, b"not archived\n"
+            return self.finish(200, {"Content-Type": got[1],
+                                     "Cache-Control": "public, max-age=31536000, immutable",
+                                     "X-Fxhash-Archived": "outside resource, archived copy"},
+                               got[0])
         spec = f"{e['commit']}:{rel}"
         kind = self.git(e["repo"], "cat-file", "-t", spec)
         if kind and kind.strip() == "tree":
@@ -92,9 +166,10 @@ class Gateway:
             return 404, {}, b"not found\n"
         body = self.git(e["repo"], "cat-file", "blob", spec, binary=True)
         blob = (self.git(e["repo"], "rev-parse", spec) or "").strip()
-        return 200, {"Content-Type": content_type(rel), "ETag": f'"{blob}"',
-                     "Cache-Control": "public, max-age=31536000, immutable",
-                     "X-Fxhash-Verified": e["verified"], "X-Fxhash-Uri": e["uri"]}, body
+        return self.finish(200, {"Content-Type": content_type(rel), "ETag": f'"{blob}"',
+                                 "Cache-Control": "public, max-age=31536000, immutable",
+                                 "X-Fxhash-Verified": e["verified"],
+                                 "X-Fxhash-Uri": e["uri"]}, body)
 
     def redirect(self, path: str, query: str) -> tuple[int, dict[str, str], bytes]:
         if path in ("", "/"):
@@ -159,10 +234,12 @@ def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8095)
     ap.add_argument("--domain", default="fxhash.gakoy.com")
+    ap.add_argument("--ext", help="ext_archive.py archive of outside resources")
     a = ap.parse_args()
     with gzip.open(a.index, "rt") as f:
         index = json.load(f)
-    gw = Gateway(index, Path(a.gitroot), a.domain)
+    gw = Gateway(index, Path(a.gitroot), a.domain,
+                 ExtArchive(Path(a.ext)) if a.ext else None)
     ThreadingHTTPServer((a.host, a.port), make_handler(gw)).serve_forever()
 
 

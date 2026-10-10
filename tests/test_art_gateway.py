@@ -37,12 +37,15 @@ def test_labels() -> None:
     assert art_gateway_index.label_of("https://example.org/x") is None
 
 
-@pytest.fixture
-def served(tmp_path: Path, ident: Identity) -> Iterator[str]:
+LIB = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.1/p5.min.js"
+FONT_CSS = "https://fonts.googleapis.com/css2?family=Roboto"
+FONT = "https://fonts.gstatic.com/s/roboto/v51/a.woff2"
+
+
+def start(tmp_path: Path, ident: Identity, ext: art_gateway.ExtArchive | None,
+          files: dict[str, str]) -> tuple[ThreadingHTTPServer, str]:
     src = make_tree(tmp_path / "src" / "p" / "2023" / "Art__1", {
-        "index.html": "<script>draw()</script>\n", "lib/a.js": "x\r\n",
-        "sub/index.html": "sub\n",
-        "_source.txt": f"id: 1\nname: Art\ngenerative_uri: ipfs://{CID}\n"})
+        **files, "_source.txt": f"id: 1\nname: Art\ngenerative_uri: ipfs://{CID}\n"})
     git = tmp_path / "git"
     convert_one(src, git / "p" / "2023" / "Art__1.git", ident)
     index_p = tmp_path / "index.json.gz"
@@ -50,10 +53,45 @@ def served(tmp_path: Path, ident: Identity) -> Iterator[str]:
     art_gateway_index.main()
     with gzip.open(index_p, "rt") as f:
         index = json.load(f)
-    gw = art_gateway.Gateway(index, git, "art.test")
+    gw = art_gateway.Gateway(index, git, "art.test", ext)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), art_gateway.make_handler(gw))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{srv.server_address[1]}"
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+
+@pytest.fixture
+def served(tmp_path: Path, ident: Identity) -> Iterator[str]:
+    srv, base = start(tmp_path, ident, None, {
+        "index.html": "<script>draw()</script>\n", "lib/a.js": "x\r\n",
+        "sub/index.html": "sub\n"})
+    yield base
+    srv.shutdown()
+
+
+@pytest.fixture
+def served_ext(tmp_path: Path, ident: Identity) -> Iterator[str]:
+    archive = tmp_path / "ext"
+    rows = []
+    for url, body, ctype, integrity in (
+            (LIB, "p5()", "application/javascript", "ok"),
+            (FONT_CSS, f"@font-face{{src:url({FONT})}}", "text/css", None),
+            (FONT, "woff", "font/woff2", None),
+            ("https://cdn.jsdelivr.net/npm/tampered.js", "evil()", "text/javascript",
+             "mismatch")):
+        local = url.split("//", 1)[1].split("?")[0]
+        (archive / "files" / local).parent.mkdir(parents=True, exist_ok=True)
+        (archive / "files" / local).write_text(body)
+        rows.append({"url": url, "local": local, "status": 200, "content_type": ctype,
+                     "integrity": integrity})
+    (archive / "manifest.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    srv, base = start(tmp_path, ident, art_gateway.ExtArchive(archive), {
+        "index.html": f'<script src="{LIB}"></script><script src="'
+                      f'{LIB.removeprefix("https:")}"></script>'
+                      f'<link href="{FONT_CSS}" rel="stylesheet">'
+                      '<script src="https://cdn.jsdelivr.net/npm/tampered.js"></script>'
+                      '<script src="https://unpkg.com/other.js"></script>\n',
+        "a.js": "x\r\n"})
+    yield base
     srv.shutdown()
 
 
@@ -102,3 +140,32 @@ def test_redirects(served: str) -> None:
     assert get(served, "art.test", "/ipfs/notacid/")[0] == 404
     s, _, b = get(served, "art.test", "/")
     assert s == 200 and b"1 artworks" in b
+
+
+def test_archived_outside_urls_are_served_locally(served_ext: str) -> None:
+    host = art_gateway_index.cid_label(CID) + ".art.test"
+    s, h, b = get(served_ext, host, "/")
+    html = b.decode()
+    local = "/_ext/cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.1/p5.min.js"
+    assert html.count(local) == 2  # https: and protocol-relative forms
+    assert "/_ext/fonts.googleapis.com/css2" in html
+    assert "https://cdn.jsdelivr.net/npm/tampered.js" in html  # integrity mismatch: unused
+    assert "https://unpkg.com/other.js" in html  # not archived: left, and blocked
+    assert h["X-Fxhash-Rewritten"] == "3 outside URL(s) -> /_ext/"
+    s, h, b = get(served_ext, host, local)
+    assert s == 200 and b == b"p5()" and h["Content-Type"] == "application/javascript"
+    # archived CSS is rewritten too, so its fonts load from the archive
+    s, h, b = get(served_ext, host, "/_ext/fonts.googleapis.com/css2")
+    assert b == b"@font-face{src:url(/_ext/fonts.gstatic.com/s/roboto/v51/a.woff2)}"
+    assert get(served_ext, host, "/_ext/fonts.gstatic.com/s/roboto/v51/a.woff2")[2] == b"woff"
+    assert get(served_ext, host, "/a.js")[2] == b"x\r\n"  # nothing to rewrite: same bytes
+    assert get(served_ext, host, "/_ext/cdn.jsdelivr.net/npm/tampered.js")[0] == 404
+    assert get(served_ext, host, "/_ext/../../../etc/passwd")[0] == 404
+    assert get(served_ext, host, "/_ext/x/../../manifest.jsonl")[0] == 404
+
+
+def test_no_archive_no_rewrite(served: str) -> None:
+    host = art_gateway_index.cid_label(CID) + ".art.test"
+    _, h, _ = get(served, host, "/")
+    assert "X-Fxhash-Rewritten" not in h
+    assert get(served, host, "/_ext/cdnjs.cloudflare.com/x.js")[0] == 404
