@@ -28,7 +28,7 @@ Columns of the overview:
 | 3. Ethereum + IPFS | 8 | 639 | 8 | 8 | 639 | 639 from chain | 8 |
 | 4. Ethereum + ONCHFS | 50 | 5,605 | 50 | 50 | 1,935 | 5,605 from chain | 50 |
 | 5. Ethereum + https only | 63 | 2,266 | 60 | unverifiable | 0 (server only) | 2,266 from chain | 60 |
-| 6. Base + IPFS | 274 | 21,567 | 274 | 274 | 6,810 | 21,567 from chain | 274 |
+| 6. Base + IPFS | 274 | 21,567 | 274 | 274 | 6,810 (all that exist) | 21,567 from chain | 274 |
 | 7. Base + ONCHFS | 111 | 643,334 | 111 | 111 | 835 | 643,334 from chain | 111 |
 | 8. Base + https only | 258 | 186,306 | 258 | unverifiable | 0 (server only) | 186,306 from chain | 258 |
 | Tezos burned | 3,088 | — | 0 | — | — | — | — |
@@ -115,11 +115,19 @@ Totals:
     each rebuilding its own on-chain hash.
   - 2 versions have no copy left on IPFS: Kraswerk v2 (live 21 minutes) and
     SPACE WANDERER v2 (live 2 hours).
-- **Tokens:** 21,567, seeds from chain for all.
-  - 9,721 have an `ipfs://` token URI; 6,810 metadata documents fetched from the
-    anchored folders. The remaining 2,911 are still to fetch.
-  - 11,846 tokens of versioned contracts have an https token URI, even though the
-    project's code is anchored on IPFS.
+- **Tokens:** 21,567, seeds from chain for all. `tokenURI` was read from chain token by
+  token for the 41 contracts where token 1 alone was misleading
+  (`scripts/evm_token_uris.py`): early tokens of a contract point to IPFS, later ones to
+  `https://media.fxhash.xyz`.
+  - 7,147 tokens have an `ipfs://` token URI:
+    - 6,810 metadata documents are fetched and hash-checked: every one that exists.
+    - 337 point to IPFS paths that never existed (`data/evm-dangling-token-uris.jsonl`).
+      For 331 tokens (7 contracts), the contract appends `/<id>/metadata.json` to a
+      versionInfo uri that is a single project document, not a folder. For 6 tokens
+      (5 contracts), the folder has no entry for that token. Their metadata exists only
+      on fxhash's server.
+  - 14,420 tokens have an https token URI (server only), although the project's code is
+    anchored on IPFS.
 
 ## 7. Base + ONCHFS
 

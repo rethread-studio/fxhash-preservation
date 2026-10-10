@@ -8,8 +8,9 @@ against its hash, so a path under an anchored CID is as trustworthy as the CID. 
 one {"chain", "id", "uri", "how"} per line: an ipfs:// URI that the contract stores (base
 URI, or a versionInfo uri). A folder of per-token entries gives one line per token,
 <uri>/<token>/metadata.json; a folder holding only metadata.json, or a single document, is
-not token metadata and gets one "not a token folder" line. Output lines: {"chain", "id",
-"how", "uri", "token_id", "text"} or {..., "error"}. Stdlib only.
+not token metadata and gets one "not a token folder" line. A line with a "token_id" is one
+token's tokenURI as the contract returns it (evm_token_uris.py), fetched as is. Output
+lines: {"chain", "id", "how", "uri", "token_id", "text"} or {..., "error"}. Stdlib only.
 """
 
 from __future__ import annotations
@@ -40,7 +41,24 @@ def main() -> None:
     with open(folders_p) as f:
         folders = [json.loads(line) for line in f]
     with gzip.open(out_p, "wt") as out:
+        # lines with a token_id name one document: its tokenURI, as the contract returns it
+        single = [fo for fo in folders if "token_id" in fo]
+
+        def doc(fo: dict[str, Any]) -> dict[str, Any]:
+            row: dict[str, Any] = {k: fo[k] for k in ("chain", "id", "how", "uri",
+                                                      "token_id")}
+            try:
+                row["text"] = api(base, "cat", fo["uri"].removeprefix("ipfs://")).decode()
+            except Exception as e:  # noqa: BLE001 - recorded, not fatal
+                row["error"] = str(e)[:200]
+            return row
+
+        with ThreadPoolExecutor(8) as pool:
+            for row in pool.map(doc, single):
+                out.write(json.dumps(row) + "\n")
         for fo in folders:
+            if "token_id" in fo:
+                continue
             cid = fo["uri"].removeprefix("ipfs://").rstrip("/")
             head = {k: fo[k] for k in ("chain", "id", "how", "uri")}
             try:
